@@ -153,23 +153,20 @@ export async function pressAndHold(page: CrawlPage): Promise<boolean> {
 
       await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' });
       await new Promise(r => setTimeout(r, 100));
-      logger.info({ x, y }, 'press-and-hold: mousePressed');
+      logger.info({ x, y }, 'press-and-hold: mousePressed — holding until resolved');
       await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
 
-      await new Promise(r => setTimeout(r, HOLD_DURATION_MS));
-      logger.info('press-and-hold: held for 5s, checking result');
-
-      const start = Date.now();
-      while (Date.now() - start < MAX_WAIT_MS) {
+      // Keep holding — check every second if the anti-bot is gone
+      while (true) {
         await page.waitFor({ timeMs: POLL_INTERVAL_MS });
         const currentUrl = await page.url();
         if (currentUrl !== urlBefore) {
-          logger.info({ urlBefore, currentUrl }, 'press-and-hold: URL changed');
+          logger.info({ urlBefore, currentUrl }, 'press-and-hold: URL changed while holding');
           break;
         }
-        const resolved = await page.evaluate(`!document.body.innerText.match(/press.*hold|verify.*human|not a bot/i)`);
+        const resolved = await page.evaluate(`!(document.body && document.body.innerText && document.body.innerText.match(/press.*hold|verify.*human|not a bot/i))`);
         if (resolved) {
-          logger.info('press-and-hold: anti-bot text gone');
+          logger.info('press-and-hold: anti-bot text gone while holding');
           break;
         }
       }
