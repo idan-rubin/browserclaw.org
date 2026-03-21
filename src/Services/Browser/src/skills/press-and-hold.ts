@@ -153,30 +153,30 @@ export async function pressAndHold(page: CrawlPage): Promise<boolean> {
 
       await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' });
       await new Promise(r => setTimeout(r, 100));
-      logger.info({ x, y }, 'press-and-hold: mousePressed — holding for 10s');
+      logger.info({ x, y }, 'press-and-hold: mousePressed');
       await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
 
-      // Hold for 10 seconds — long enough for any press-and-hold challenge
+      // Hold for 10s without checking — animation causes false positives during this window
       await new Promise(r => setTimeout(r, HOLD_DURATION_MS));
+      logger.info('press-and-hold: 10s hold complete, now actively monitoring');
+
+      // Keep holding and check every second — no max timeout
+      while (true) {
+        await page.waitFor({ timeMs: POLL_INTERVAL_MS });
+        const currentUrl = await page.url();
+        if (currentUrl !== urlBefore) {
+          logger.info({ urlBefore, currentUrl }, 'press-and-hold: URL changed');
+          break;
+        }
+        const stillBlocked = await page.evaluate(`!!(document.body && document.body.innerText && document.body.innerText.match(/press.*hold|verify.*human|not a bot/i))`);
+        if (!stillBlocked) {
+          logger.info('press-and-hold: resolved');
+          break;
+        }
+      }
 
       await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
-      logger.info('press-and-hold: mouseReleased after 10s');
-
-      // Wait for page to settle
-      await page.waitFor({ timeMs: 2000 });
-
-      // If page didn't change, refresh
-      const currentUrl = await page.url();
-      if (currentUrl === urlBefore) {
-        const stillBlocked = await page.evaluate(`!!(document.body && document.body.innerText && document.body.innerText.match(/press.*hold|verify.*human|not a bot/i))`);
-        if (stillBlocked) {
-          logger.info('press-and-hold: still blocked after hold, refreshing page');
-          await page.goto(currentUrl);
-          await page.waitFor({ timeMs: 3000 });
-        }
-      } else {
-        logger.info({ urlBefore, currentUrl }, 'press-and-hold: URL changed');
-      }
+      logger.info('press-and-hold: mouseReleased');
     } finally {
       cdp.close();
     }
