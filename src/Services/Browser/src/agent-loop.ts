@@ -14,6 +14,7 @@ import {
   WAIT_ACTION_MS,
   SCROLL_PIXELS,
   LLM_MAX_TOKENS,
+  MAX_STEPS,
 } from './config.js';
 
 const SYSTEM_PROMPT = `You are a browser automation agent. You read accessibility snapshots and act.
@@ -21,10 +22,11 @@ const SYSTEM_PROMPT = `You are a browser automation agent. You read accessibilit
 Respond with valid JSON:
 {
   "reasoning": "what you're doing and why — THIS IS YOUR MEMORY. Record all data you collect here: names, prices, URLs, findings, comparisons. Your previous reasoning is the ONLY context you have between steps. Be thorough.",
-  "action": "click" | "type" | "navigate" | "select" | "scroll" | "wait" | "press_and_hold" | "click_cloudflare" | "ask_user" | "done" | "fail",
+  "action": "click" | "type" | "navigate" | "back" | "select" | "scroll" | "keyboard" | "wait" | "press_and_hold" | "click_cloudflare" | "ask_user" | "done" | "fail",
   "ref": "element ref number (for click, type, select)",
   "text": "text to type (for type) or question (for ask_user)",
   "url": "URL (for navigate)",
+  "key": "key name (for keyboard) — e.g. Enter, Escape, Tab, ArrowDown, ArrowUp",
   "options": ["values (for select)"],
   "direction": "up" | "down" (for scroll),
   "answer": "direct answer to the user's question (for done)"
@@ -36,6 +38,8 @@ Rules:
 - If something failed, try a different approach. Never repeat a failed action.
 - "type" clears the field first, then types.
 - After typing in any field, wait — then check for autocomplete dropdowns and click the matching option.
+- "keyboard" to press special keys: Enter (submit forms), Escape (close dropdowns/dialogs), Tab (move between fields), ArrowDown/ArrowUp (navigate dropdowns).
+- "back" to go back in browser history. Use this instead of manually tracking URLs when you need to return to the previous page.
 - "press_and_hold" for press-and-hold anti-bot challenges. Wait after, check if it worked. If the challenge cleared but the page still looks the same (no new content loaded), refresh the page by navigating to the current URL. Try twice before asking user.
 - "click_cloudflare" for Cloudflare security checks ("Verify you are human" checkbox). The system will find and click the checkbox. Wait after, check if it worked. Try twice before asking user.
 - "ask_user" only when you need info you can't get from the page (MFA codes, credentials, preferences).
@@ -94,9 +98,58 @@ async function safeSnapshot(page: CrawlPage): Promise<string> {
 }
 
 const SKILL_INJECT_MAX_STEP = 2;
+const HISTORY_RECENT_WINDOW = 10;
 
-function buildUserMessage(prompt: string, snapshot: string, history: AgentStep[], url: string, title: string, tabCount?: number, domainSkill?: CatalogSkill | null): string {
+function truncateHistory(history: AgentStep[]): string {
+  if (history.length <= HISTORY_RECENT_WINDOW) {
+    // All history fits in window — render fully
+    let out = 'Previous actions:\n';
+    for (const step of history) {
+      out += formatStep(step);
+    }
+    return out;
+  }
+
+  // Summarize older steps, show recent ones in full
+  const older = history.slice(0, history.length - HISTORY_RECENT_WINDOW);
+  const recent = history.slice(history.length - HISTORY_RECENT_WINDOW);
+
+  let out = `Previous actions (${history.length} total, showing last ${HISTORY_RECENT_WINDOW} in detail):\n`;
+  out += '  Earlier steps summary: ';
+  out += older.map(s => `${s.action.action}${s.action.error_feedback ? '(FAILED)' : ''}`).join(' → ');
+  out += '\n';
+
+  // Include the last older step's reasoning as context bridge
+  const lastOlderStep = older[older.length - 1];
+  out += `  [Context from step ${lastOlderStep.step}]: ${lastOlderStep.action.reasoning.substring(0, 300)}\n\n`;
+
+  for (const step of recent) {
+    out += formatStep(step);
+  }
+  return out;
+}
+
+function formatStep(step: AgentStep): string {
+  let line = `  Step ${step.step}: ${step.action.action} — ${step.action.reasoning}\n`;
+  if (step.action.error_feedback) {
+    line += `    ⚠ ACTION FAILED: ${step.action.error_feedback}\n`;
+  }
+  if (step.user_response) {
+    line += `    User responded: "${step.user_response}"\n`;
+  }
+  return line;
+}
+
+function buildUserMessage(prompt: string, snapshot: string, history: AgentStep[], url: string, title: string, plan?: string | null, tabCount?: number, domainSkill?: CatalogSkill | null, stepsRemaining?: number): string {
   let message = `Task: ${prompt}\n`;
+
+  if (plan) {
+    message += `\nPlan: ${plan}\n`;
+  }
+
+  if (stepsRemaining !== undefined && stepsRemaining <= 10) {
+    message += `\n⚠ WARNING: Only ${stepsRemaining} steps remaining. Wrap up now — summarize what you've found and use "done" or "fail".\n`;
+  }
 
   if (domainSkill) {
     message += '\n--- PLAYBOOK (proven workflow for this site) ---\n';
@@ -122,13 +175,7 @@ function buildUserMessage(prompt: string, snapshot: string, history: AgentStep[]
   message += '\n';
 
   if (history.length > 0) {
-    message += 'Previous actions:\n';
-    for (const step of history) {
-      message += `  Step ${step.step}: ${step.action.action} — ${step.action.reasoning}\n`;
-      if (step.user_response) {
-        message += `    User responded: "${step.user_response}"\n`;
-      }
-    }
+    message += truncateHistory(history);
     message += '\n';
   }
 
@@ -162,6 +209,7 @@ function parseAction(parsed: Record<string, unknown>): AgentAction {
     ref: parsed.ref as string | undefined,
     text: parsed.text as string | undefined,
     url: parsed.url as string | undefined,
+    key: parsed.key as string | undefined,
     options: parsed.options as string[] | undefined,
     direction: parsed.direction as AgentAction['direction'],
   };
@@ -183,6 +231,15 @@ async function executeAction(action: AgentAction, page: CrawlPage): Promise<void
     case 'navigate':
       if (!action.url) throw new Error('navigate action requires url');
       await page.goto(action.url);
+      break;
+
+    case 'back':
+      await page.evaluate('window.history.back()');
+      break;
+
+    case 'keyboard':
+      if (!action.key) throw new Error('keyboard action requires key');
+      await page.press(action.key);
       break;
 
     case 'select':
@@ -229,6 +286,7 @@ export async function runAgentLoop(
   waitForUser?: () => Promise<string>,
   browser?: BrowserClaw,
   domainSkill?: CatalogSkill | null,
+  maxSteps = MAX_STEPS,
 ): Promise<AgentLoopResult> {
   const history: AgentStep[] = [];
   const startTime = Date.now();
@@ -236,6 +294,7 @@ export async function runAgentLoop(
   let consecutiveParseFailures = 0;
   const MAX_PARSE_FAILURES = 3;
 
+  let planText: string | null = null;
   try {
     let planMessage = `User prompt: ${prompt}`;
     if (domainSkill) {
@@ -256,13 +315,14 @@ Respond with JSON: {"plan": "your plan here"}`,
       maxTokens: 256,
     });
     if (plan.plan) {
+      planText = plan.plan;
       emit('plan', { prompt, plan: plan.plan });
     }
   } catch (err) {
     logger.error({ err }, 'Failed to generate plan');
   }
 
-  for (let step = 0; ; step++) {
+  for (let step = 0; step < maxSteps; step++) {
     if (signal.aborted) {
       return {
         success: false,
@@ -297,7 +357,9 @@ Respond with JSON: {"plan": "your plan here"}`,
       }
     }
     const skillForStep = (step <= SKILL_INJECT_MAX_STEP) ? domainSkill : undefined;
-    const userMessage = buildUserMessage(prompt, snapshot, history, url, title, tabCount, skillForStep);
+    const planForStep = (step <= SKILL_INJECT_MAX_STEP) ? planText : null;
+    const stepsRemaining = maxSteps - step - 1;
+    const userMessage = buildUserMessage(prompt, snapshot, history, url, title, planForStep, tabCount, skillForStep, stepsRemaining);
 
     let action: AgentAction;
     try {
@@ -414,6 +476,7 @@ Respond with JSON: {"plan": "your plan here"}`,
       const message = err instanceof Error ? err.message : 'Action execution failed';
       logger.error({ step, action: action.action, error: message }, 'Action execution failed');
       emit('step_error', { step, action: action.action, error: message });
+      agentStep.action.error_feedback = message;
       await page.waitFor({ timeMs: 1000 });
 
       if (await detectPopup(page)) {
@@ -439,4 +502,15 @@ Respond with JSON: {"plan": "your plan here"}`,
     const waitMs = getWaitMs(action.action);
     await page.waitFor({ timeMs: waitMs });
   }
+
+  // maxSteps reached
+  logger.warn({ steps: history.length, maxSteps }, 'Agent hit step limit');
+  const lastReasoning = history.length > 0 ? history[history.length - 1].action.reasoning : '';
+  return {
+    success: false,
+    steps: history,
+    error: `Reached maximum step limit (${maxSteps}). Last reasoning: ${lastReasoning.substring(0, 200)}`,
+    duration_ms: Date.now() - startTime,
+    final_url: history.length > 0 ? history[history.length - 1].url : undefined,
+  };
 }

@@ -31,7 +31,8 @@ export const WAIT_AFTER_OTHER_MS = requireEnvInt('WAIT_AFTER_OTHER_MS');
 export const WAIT_ACTION_MS = requireEnvInt('WAIT_ACTION_MS');
 export const SCROLL_PIXELS = 500;
 export const USER_RESPONSE_TIMEOUT_MS = requireEnvInt('USER_RESPONSE_TIMEOUT_MS');
-export const LLM_MAX_TOKENS = 1024;
+export const MAX_STEPS = parseInt(process.env.MAX_STEPS || '100', 10);
+export const LLM_MAX_TOKENS = parseInt(process.env.LLM_MAX_TOKENS || '1024', 10);
 
 export interface MinioConfig {
   endpoint: string;

@@ -2,6 +2,8 @@ import OpenAI from 'openai';
 import { parseJsonResponse } from './parse-json-response.js';
 import { logger } from './logger.js';
 
+const LLM_TIMEOUT_MS = parseInt(process.env.LLM_TIMEOUT_MS || '30000', 10);
+
 export interface ProviderConfig {
   provider: string;
   label: string;
@@ -226,6 +228,19 @@ export function resetLLMCallCount(): void {
   _llmCallCount = 0;
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  if (timeoutMs <= 0) return promise;
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 export async function llm(req: LLMRequest): Promise<LLMResponse> {
   _llmCallCount++;
   const provider = getActiveProvider();
@@ -237,11 +252,11 @@ export async function llm(req: LLMRequest): Promise<LLMResponse> {
   }
 
   try {
-    return await callLLM(provider, model, req);
+    return await withTimeout(callLLM(provider, model, req), LLM_TIMEOUT_MS, 'LLM call');
   } catch (err) {
     if (isSubscription && err instanceof Error && err.message.includes('401')) {
       await refreshOAuthToken();
-      return callLLM(provider, model, req);
+      return withTimeout(callLLM(provider, model, req), LLM_TIMEOUT_MS, 'LLM call (retry)');
     }
     throw err;
   }

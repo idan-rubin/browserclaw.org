@@ -16,7 +16,7 @@ export interface CreateSessionRequest {
   skip_moderation?: boolean;
 }
 
-export type AgentActionType = 'click' | 'type' | 'navigate' | 'select' | 'scroll' | 'wait' | 'press_and_hold' | 'click_cloudflare' | 'done' | 'fail' | 'ask_user';
+export type AgentActionType = 'click' | 'type' | 'navigate' | 'back' | 'select' | 'scroll' | 'keyboard' | 'wait' | 'press_and_hold' | 'click_cloudflare' | 'done' | 'fail' | 'ask_user';
 
 export interface AgentAction {
   action: AgentActionType;
@@ -25,8 +25,11 @@ export interface AgentAction {
   ref?: string;
   text?: string;
   url?: string;
+  key?: string;
   options?: string[];
   direction?: 'up' | 'down';
+  /** Set by the agent loop when action execution fails — fed back to LLM in next step */
+  error_feedback?: string;
 }
 
 export interface AgentStep {

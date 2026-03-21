@@ -33,6 +33,16 @@ vi.mock('../skills/tab-manager.js', () => ({
   TabManager: vi.fn(),
 }));
 
+vi.mock('../config.js', () => ({
+  WAIT_AFTER_TYPE_MS: 100,
+  WAIT_AFTER_CLICK_MS: 100,
+  WAIT_AFTER_OTHER_MS: 100,
+  WAIT_ACTION_MS: 100,
+  SCROLL_PIXELS: 500,
+  LLM_MAX_TOKENS: 1024,
+  MAX_STEPS: 100,
+}));
+
 vi.mock('../logger.js', () => ({
   logger: {
     info: vi.fn(),
@@ -57,6 +67,7 @@ function mockPage() {
     goto: vi.fn().mockResolvedValue(undefined),
     select: vi.fn().mockResolvedValue(undefined),
     evaluate: vi.fn().mockResolvedValue(''),
+    press: vi.fn().mockResolvedValue(undefined),
     waitFor: vi.fn().mockResolvedValue(undefined),
     id: 'test-page-id',
   } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -212,6 +223,53 @@ describe('runAgentLoop', () => {
     expect(planEvents[0][1].plan).toBe('Go to site and click');
   });
 
+  it('executes keyboard action correctly', async () => {
+    mockedLlmJson
+      .mockResolvedValueOnce({ plan: 'Press Enter' })
+      .mockResolvedValueOnce({ action: 'keyboard', reasoning: 'Submit form', key: 'Enter' })
+      .mockResolvedValueOnce({ action: 'done', reasoning: 'Done' });
+
+    const page = mockPage();
+    const emit = vi.fn();
+    const controller = new AbortController();
+
+    await runAgentLoop('Submit the form', page, emit, controller.signal);
+
+    expect(page.press).toHaveBeenCalledWith('Enter');
+  });
+
+  it('executes back action correctly', async () => {
+    mockedLlmJson
+      .mockResolvedValueOnce({ plan: 'Go back' })
+      .mockResolvedValueOnce({ action: 'back', reasoning: 'Return to previous page' })
+      .mockResolvedValueOnce({ action: 'done', reasoning: 'Done' });
+
+    const page = mockPage();
+    const emit = vi.fn();
+    const controller = new AbortController();
+
+    await runAgentLoop('Go back', page, emit, controller.signal);
+
+    expect(page.evaluate).toHaveBeenCalledWith('window.history.back()');
+  });
+
+  it('records error feedback when action fails', async () => {
+    mockedLlmJson
+      .mockResolvedValueOnce({ plan: 'Click' })
+      .mockResolvedValueOnce({ action: 'click', reasoning: 'Click button', ref: '42' })
+      .mockResolvedValueOnce({ action: 'done', reasoning: 'Done' });
+
+    const page = mockPage();
+    page.click.mockRejectedValueOnce(new Error('Element not found'));
+    const emit = vi.fn();
+    const controller = new AbortController();
+
+    const result = await runAgentLoop('Click button', page, emit, controller.signal);
+
+    expect(result.success).toBe(true);
+    expect(result.steps[0].action.error_feedback).toBe('Element not found');
+  });
+
   it('resets parse failure counter on successful parse', async () => {
     mockedLlmJson
       .mockResolvedValueOnce({ plan: 'Plan' })
@@ -230,5 +288,21 @@ describe('runAgentLoop', () => {
 
     // Should succeed because parse failures were never 3 consecutive
     expect(result.success).toBe(true);
+  });
+
+  it('fails when MAX_STEPS is reached', async () => {
+    mockedLlmJson
+      .mockResolvedValueOnce({ plan: 'Scroll forever' })
+      .mockResolvedValue({ action: 'scroll', reasoning: 'Keep scrolling', direction: 'down' });
+
+    const page = mockPage();
+    const emit = vi.fn();
+    const controller = new AbortController();
+
+    const result = await runAgentLoop('Scroll', page, emit, controller.signal, undefined, undefined, undefined, 3);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('maximum step limit');
+    expect(result.steps).toHaveLength(3);
   });
 });

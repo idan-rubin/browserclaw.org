@@ -111,15 +111,19 @@ export async function getPageText(page: CrawlPage): Promise<string> {
 export type AntiBotType = 'press_and_hold' | 'cloudflare_checkbox' | null;
 
 export function detectAntiBot(domText: string, snapshot: string): AntiBotType {
-  if (PRESS_HOLD_PATTERN.test(domText) && !/press.*hold/i.test(snapshot)) {
+  // Check press-and-hold first — if DOM mentions press/hold, it's a press-and-hold challenge
+  // regardless of what the snapshot says
+  if (PRESS_HOLD_PATTERN.test(domText)) {
     logger.info({ domTextPreview: domText.substring(0, 150) }, 'Anti-bot detected: press-and-hold');
     return 'press_and_hold';
   }
-  if (CLOUDFLARE_PATTERN.test(domText) && !/press.*hold/i.test(domText)) {
+  // Cloudflare-specific patterns (no press-and-hold in DOM text, already checked above)
+  if (CLOUDFLARE_PATTERN.test(domText)) {
     logger.info({ domTextPreview: domText.substring(0, 150) }, 'Anti-bot detected: cloudflare checkbox');
     return 'cloudflare_checkbox';
   }
-  if (ANTI_BOT_PATTERN.test(domText) && !/press.*hold/i.test(snapshot)) {
+  // Generic anti-bot (verify human, captcha, not a bot) — treat as cloudflare-style checkbox
+  if (ANTI_BOT_PATTERN.test(domText)) {
     logger.info({ domTextPreview: domText.substring(0, 150) }, 'Anti-bot detected: generic');
     return 'cloudflare_checkbox';
   }
