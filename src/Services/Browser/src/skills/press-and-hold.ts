@@ -1,15 +1,21 @@
 import type { CrawlPage } from 'browserclaw';
-import { openCdpConnection } from './cdp-utils.js';
+import { openCdpConnection, cdpClick } from './cdp-utils.js';
 import { logger } from '../logger.js';
+
+export type AntiBotType = 'press_and_hold' | 'cloudflare_checkbox' | null;
 
 const PRESS_HOLD_PATTERN = /press.*hold|hold.*to.*confirm/i;
 const CLOUDFLARE_PATTERN = /performing security verification|cloudflare|verify you are human|just a moment/i;
 const ANTI_BOT_PATTERN = /press.*hold|verify.*human|not a bot|captcha/i;
+
+const BLOCKED_PATTERNS: Record<AntiBotType & string, RegExp> = {
+  press_and_hold: /press.*hold|verify.*human|not a bot|access.*denied/i,
+  cloudflare_checkbox: /performing security verification|verify you are human|just a moment/i,
+};
+
 function humanHoldMs(): number {
   return 4000 + Math.floor(Math.random() * 6000); // 4-10 seconds
 }
-const MAX_WAIT_MS = 15_000;
-const POLL_INTERVAL_MS = 1_000;
 
 async function findButtonCoordinates(page: CrawlPage): Promise<{ x: number; y: number } | null> {
   const result = await page.evaluate(`
@@ -108,7 +114,11 @@ export async function getPageText(page: CrawlPage): Promise<string> {
   `) as string;
 }
 
-export type AntiBotType = 'press_and_hold' | 'cloudflare_checkbox' | null;
+export async function isStillBlocked(page: CrawlPage, type: AntiBotType): Promise<boolean> {
+  if (!type) return false;
+  const pattern = BLOCKED_PATTERNS[type];
+  return !!(await page.evaluate(`!!(document.body && document.body.innerText && document.body.innerText.match(${pattern}))`));
+}
 
 export function detectAntiBot(domText: string, snapshot: string): AntiBotType {
   // Check press-and-hold first — if DOM mentions press/hold, it's a press-and-hold challenge
@@ -156,28 +166,23 @@ export async function pressAndHold(page: CrawlPage): Promise<boolean> {
     const cdp = await openCdpConnection(page);
     logger.info('press-and-hold: CDP connected');
     try {
-
-      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' });
-      await new Promise(r => setTimeout(r, 100 + Math.floor(Math.random() * 200)));
       const jitterX = x + Math.floor(Math.random() * 20) - 10;
       const jitterY = y + Math.floor(Math.random() * 10) - 5;
       const holdMs = humanHoldMs();
       logger.info({ x: jitterX, y: jitterY, holdMs }, 'press-and-hold: mousePressed');
-      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: jitterX, y: jitterY, button: 'left', clickCount: 1 });
-      await new Promise(r => setTimeout(r, holdMs));
-      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: jitterX, y: jitterY, button: 'left', clickCount: 1 });
-      logger.info('press-and-hold: released after 10s');
+      await cdpClick(cdp, jitterX, jitterY, { delay: 100 + Math.floor(Math.random() * 200), holdMs });
+      logger.info({ holdMs }, 'press-and-hold: released');
     } finally {
       cdp.close();
     }
     await page.waitFor({ timeMs: 2000 });
 
-    const stillBlocked = await page.evaluate(`!!(document.body && document.body.innerText && document.body.innerText.match(/press.*hold|verify.*human|not a bot|access.*denied/i))`);
+    const stillBlocked = await isStillBlocked(page, 'press_and_hold');
     if (stillBlocked) {
       logger.info('press-and-hold: still blocked, refreshing page');
       await page.goto(urlBefore);
       await page.waitFor({ timeMs: 3000 });
-      const blockedAfterRefresh = await page.evaluate(`!!(document.body && document.body.innerText && document.body.innerText.match(/press.*hold|verify.*human|not a bot|access.*denied/i))`);
+      const blockedAfterRefresh = await isStillBlocked(page, 'press_and_hold');
       logger.info({ blockedAfterRefresh }, 'press-and-hold: result after refresh');
       return !blockedAfterRefresh;
     }

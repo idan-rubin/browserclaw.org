@@ -1,4 +1,5 @@
 import type { CrawlPage } from 'browserclaw';
+import { logger } from '../logger.js';
 
 export function getCdpBaseUrl(page: CrawlPage): string {
   const cdpUrl = (page as unknown as { cdpUrl: string }).cdpUrl;
@@ -50,15 +51,32 @@ export async function openCdpConnection(page: CrawlPage): Promise<CdpConnection>
   const send = (method: string, params: Record<string, unknown>) => new Promise<void>((resolve) => {
     const id = ++msgId;
     const onMsg = (data: Buffer) => {
-      if (JSON.parse(data.toString()).id === id) {
+      let parsed: { id?: number; error?: { code?: number; message?: string } };
+      try {
+        parsed = JSON.parse(data.toString());
+      } catch {
+        return;
+      }
+      if (parsed.id === id) {
         socket.off('message', onMsg);
+        if (parsed.error) {
+          logger.warn({ method, cdpError: parsed.error }, 'CDP response error');
+        }
         resolve();
       }
     };
     socket.on('message', onMsg);
     socket.send(JSON.stringify({ id, method, params }));
-    setTimeout(() => { socket.off('message', onMsg); resolve(); }, 3000);
+    setTimeout(() => { socket.off('message', onMsg); logger.warn({ method, id }, 'CDP send timed out after 3s'); resolve(); }, 3000);
   });
 
   return { send, close: () => socket.close() };
+}
+
+export async function cdpClick(cdp: CdpConnection, x: number, y: number, opts?: { delay?: number; holdMs?: number }): Promise<void> {
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' });
+  if (opts?.delay) await new Promise(r => setTimeout(r, opts.delay));
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+  if (opts?.holdMs) await new Promise(r => setTimeout(r, opts.holdMs));
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
 }

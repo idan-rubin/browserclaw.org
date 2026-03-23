@@ -140,7 +140,15 @@ function formatStep(step: AgentStep): string {
   return line;
 }
 
-function buildUserMessage(prompt: string, snapshot: string, history: AgentStep[], url: string, title: string, plan?: string | null, tabCount?: number, domainSkill?: CatalogSkill | null, stepsRemaining?: number): string {
+interface BuildUserMessageOptions {
+  plan?: string | null;
+  tabCount?: number;
+  domainSkill?: CatalogSkill | null;
+  stepsRemaining?: number;
+}
+
+function buildUserMessage(prompt: string, snapshot: string, history: AgentStep[], url: string, title: string, opts?: BuildUserMessageOptions): string {
+  const { plan, tabCount, domainSkill, stepsRemaining } = opts ?? {};
   let message = `Task: ${prompt}\n`;
 
   if (plan) {
@@ -359,7 +367,7 @@ Respond with JSON: {"plan": "your plan here"}`,
     const skillForStep = (step <= SKILL_INJECT_MAX_STEP) ? domainSkill : undefined;
     const planForStep = (step <= SKILL_INJECT_MAX_STEP) ? planText : null;
     const stepsRemaining = maxSteps - step - 1;
-    const userMessage = buildUserMessage(prompt, snapshot, history, url, title, planForStep, tabCount, skillForStep, stepsRemaining);
+    const userMessage = buildUserMessage(prompt, snapshot, history, url, title, { plan: planForStep, tabCount, domainSkill: skillForStep, stepsRemaining });
 
     let action: AgentAction;
     try {

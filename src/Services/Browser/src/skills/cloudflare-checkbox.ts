@@ -1,5 +1,6 @@
 import type { CrawlPage } from 'browserclaw';
-import { getCdpBaseUrl, openCdpConnection } from './cdp-utils.js';
+import { getCdpBaseUrl, openCdpConnection, cdpClick } from './cdp-utils.js';
+import { isStillBlocked } from './press-and-hold.js';
 import { logger } from '../logger.js';
 
 const MAX_WAIT_MS = 15_000;
@@ -91,10 +92,7 @@ export async function clickCloudflareCheckbox(page: CrawlPage): Promise<boolean>
     logger.info({ x: coords.x, y: coords.y }, 'cloudflare: clicking via CDP');
     const cdp = await openCdpConnection(page);
     try {
-      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: coords.x, y: coords.y, button: 'none' });
-      await new Promise(r => setTimeout(r, 200));
-      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
-      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
+      await cdpClick(cdp, coords.x, coords.y, { delay: 200 });
       logger.info('cloudflare: clicked');
     } finally {
       cdp.close();
@@ -103,7 +101,7 @@ export async function clickCloudflareCheckbox(page: CrawlPage): Promise<boolean>
     const start = Date.now();
     while (Date.now() - start < MAX_WAIT_MS) {
       await page.waitFor({ timeMs: POLL_INTERVAL_MS });
-      const stillBlocked = await page.evaluate(`!!(document.body && document.body.innerText && document.body.innerText.match(/performing security verification|verify you are human|just a moment/i))`);
+      const stillBlocked = await isStillBlocked(page, 'cloudflare_checkbox');
       if (!stillBlocked) {
         logger.info('cloudflare: verification passed');
         return true;
