@@ -1,69 +1,85 @@
 import { describe, it, expect } from 'vitest';
-import { detectLoop, loopRecoveryStep } from '../skills/loop-detection.js';
+import { detectLoop } from '../skills/loop-detection.js';
 import type { AgentStep } from '../types.js';
 
-function makeStep(action: string, ref?: string, step = 0): AgentStep {
+function makeStep(action: string, ref?: string, step = 0, url = 'https://example.com'): AgentStep {
   return {
     step,
     action: { action: action as AgentStep['action']['action'], reasoning: 'test', ref },
-    url: 'https://example.com',
+    url,
     page_title: 'Test',
     timestamp: new Date().toISOString(),
   };
 }
 
 describe('detectLoop', () => {
-  it('returns false for empty history', () => {
-    expect(detectLoop({ action: 'click', ref: '5' }, [])).toBe(false);
+  it('returns null for short history', () => {
+    expect(detectLoop({ action: 'click', ref: '5' }, [])).toBeNull();
+    expect(detectLoop({ action: 'click', ref: '5' }, [makeStep('click', '5')])).toBeNull();
   });
 
-  it('returns false for fewer than 3 recent steps', () => {
-    const history = [makeStep('click', '5'), makeStep('click', '5')];
-    expect(detectLoop({ action: 'click', ref: '5' }, history)).toBe(false);
-  });
-
-  it('detects loop when last 3 steps match current action', () => {
-    const history = [makeStep('click', '5', 0), makeStep('click', '5', 1), makeStep('click', '5', 2)];
-    expect(detectLoop({ action: 'click', ref: '5' }, history)).toBe(true);
-  });
-
-  it('returns false when actions differ', () => {
-    const history = [makeStep('click', '5', 0), makeStep('type', '5', 1), makeStep('click', '5', 2)];
-    expect(detectLoop({ action: 'click', ref: '5' }, history)).toBe(false);
-  });
-
-  it('returns false when refs differ', () => {
-    const history = [makeStep('click', '5', 0), makeStep('click', '6', 1), makeStep('click', '5', 2)];
-    expect(detectLoop({ action: 'click', ref: '5' }, history)).toBe(false);
-  });
-
-  it('only checks last 3 steps', () => {
+  it('returns null when actions are varied', () => {
     const history = [
-      makeStep('type', '3', 0),
-      makeStep('navigate', undefined, 1),
-      makeStep('click', '5', 2),
-      makeStep('click', '5', 3),
-      makeStep('click', '5', 4),
+      makeStep('click', '5', 0),
+      makeStep('type', '3', 1),
+      makeStep('navigate', undefined, 2),
+      makeStep('scroll', undefined, 3),
+      makeStep('click', '7', 4),
     ];
-    expect(detectLoop({ action: 'click', ref: '5' }, history)).toBe(true);
+    expect(detectLoop({ action: 'click', ref: '5' }, history)).toBeNull();
   });
 
-  it('handles actions without ref', () => {
+  it('returns gentle nudge at 5 repetitions', () => {
+    const history = Array.from({ length: 5 }, (_, i) => makeStep('click', '5', i));
+    const nudge = detectLoop({ action: 'click', ref: '5' }, history);
+    expect(nudge).toEqual(expect.objectContaining({ level: 'gentle' }));
+  });
+
+  it('returns warning nudge at 8 repetitions', () => {
+    const history = Array.from({ length: 8 }, (_, i) => makeStep('click', '5', i));
+    const nudge = detectLoop({ action: 'click', ref: '5' }, history);
+    expect(nudge).toEqual(expect.objectContaining({ level: 'warning' }));
+  });
+
+  it('returns urgent nudge at 12 repetitions', () => {
+    const history = Array.from({ length: 12 }, (_, i) => makeStep('click', '5', i));
+    const nudge = detectLoop({ action: 'click', ref: '5' }, history);
+    expect(nudge).toEqual(expect.objectContaining({ level: 'urgent' }));
+  });
+
+  it('distinguishes actions by ref', () => {
     const history = [
-      makeStep('scroll', undefined, 0),
-      makeStep('scroll', undefined, 1),
-      makeStep('scroll', undefined, 2),
+      makeStep('click', '5', 0, 'https://example.com/a'),
+      makeStep('click', '6', 1, 'https://example.com/b'),
+      makeStep('click', '5', 2, 'https://example.com/c'),
+      makeStep('click', '6', 3, 'https://example.com/d'),
+      makeStep('click', '5', 4, 'https://example.com/e'),
     ];
-    expect(detectLoop({ action: 'scroll' }, history)).toBe(true);
+    // click:5 appears 3 times, click:6 appears 2 times — neither hits threshold
+    expect(detectLoop({ action: 'click', ref: '5' }, history)).toBeNull();
   });
-});
 
-describe('loopRecoveryStep', () => {
-  it('returns a wait action with recovery reasoning', () => {
-    const step = loopRecoveryStep(5);
-    expect(step.step).toBe(5);
-    expect(step.action.action).toBe('wait');
-    expect(step.action.reasoning).toContain('LOOP DETECTED');
-    expect(step.timestamp).toBeDefined();
+  it('detects stagnant page with few actions', () => {
+    const history = [
+      makeStep('scroll', undefined, 0, 'https://example.com/page'),
+      makeStep('scroll', undefined, 1, 'https://example.com/page'),
+      makeStep('scroll', undefined, 2, 'https://example.com/page'),
+      makeStep('scroll', undefined, 3, 'https://example.com/page'),
+      makeStep('scroll', undefined, 4, 'https://example.com/page'),
+    ];
+    const nudge = detectLoop({ action: 'scroll' }, history);
+    // Could be either stagnant-page warning or repetition nudge
+    expect(nudge).toEqual(expect.objectContaining({ level: 'gentle' }));
+  });
+
+  it('no stagnant detection when URLs differ', () => {
+    const history = [
+      makeStep('click', '1', 0, 'https://example.com/a'),
+      makeStep('click', '2', 1, 'https://example.com/b'),
+      makeStep('click', '3', 2, 'https://example.com/c'),
+      makeStep('click', '4', 3, 'https://example.com/d'),
+      makeStep('click', '5', 4, 'https://example.com/e'),
+    ];
+    expect(detectLoop({ action: 'click', ref: '6' }, history)).toBeNull();
   });
 });

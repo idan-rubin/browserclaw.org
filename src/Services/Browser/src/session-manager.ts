@@ -4,6 +4,7 @@ import { HttpError } from './types.js';
 import type { Session, SessionStatus, AgentLoopResult, SkillOutput, CatalogSkill, DomainSkillEntry } from './types.js';
 import { runAgentLoop } from './agent-loop.js';
 import { generateSkill, generateSkillTags } from './skill-generator.js';
+import { judgeRun } from './judge.js';
 import { moderatePrompt } from './content-policy.js';
 import { logPrompt } from './prompt-log.js';
 import { requireEnvInt, USER_RESPONSE_TIMEOUT_MS } from './config.js';
@@ -430,6 +431,14 @@ async function tryGenerateSkill(
 
   const actionSteps = result.steps.filter((s) => !NON_ACTION_TYPES.has(s.action.action));
   if (actionSteps.length < MIN_STEPS_FOR_SKILL) return 'none';
+
+  // Judge the run before generating a skill — prevent bad runs from becoming skills
+  const verdict = await judgeRun(managed.prompt, result);
+  if (!verdict.success) {
+    logger.info({ reasoning: verdict.reasoning }, 'Judge rejected run — skipping skill generation');
+    emitter('judge_rejected', { reasoning: verdict.reasoning });
+    return 'none';
+  }
 
   try {
     const skill = await generateSkill(managed.prompt, result);

@@ -2,7 +2,7 @@ import type { CrawlPage, BrowserClaw } from 'browserclaw';
 import { pressAndHold, detectAntiBot, enrichSnapshot, getPageText } from './skills/press-and-hold.js';
 import { clickCloudflareCheckbox } from './skills/cloudflare-checkbox.js';
 import { detectPopup, dismissPopup } from './skills/dismiss-popup.js';
-import { detectLoop, loopRecoveryStep } from './skills/loop-detection.js';
+import { detectLoop } from './skills/loop-detection.js';
 import { TabManager } from './skills/tab-manager.js';
 import { llmJson } from './llm.js';
 import type { AgentAction, AgentStep, AgentLoopResult, CatalogSkill } from './types.js';
@@ -21,16 +21,33 @@ const SYSTEM_PROMPT = `You are a browser automation agent. You read accessibilit
 
 Respond with valid JSON:
 {
-  "reasoning": "what you're doing and why — THIS IS YOUR MEMORY. Record all data you collect here: names, prices, URLs, findings, comparisons. Your previous reasoning is the ONLY context you have between steps. Be thorough.",
-  "action": "click" | "type" | "navigate" | "back" | "select" | "scroll" | "keyboard" | "wait" | "press_and_hold" | "click_cloudflare" | "ask_user" | "done" | "fail",
-  "ref": "element ref number (for click, type, select)",
-  "text": "text to type (for type) or question (for ask_user)",
-  "url": "URL (for navigate)",
-  "key": "key name (for keyboard) — e.g. Enter, Escape, Tab, ArrowDown, ArrowUp",
-  "options": ["values (for select)"],
-  "direction": "up" | "down" (for scroll),
-  "answer": "direct answer to the user's question (for done)"
+  "evaluation_previous_goal": "Did the previous action succeed? What changed? What went wrong? (skip on first step)",
+  "memory": "Running scratchpad of ALL accumulated data: names, prices, URLs, findings, comparisons. Carry forward everything from previous memory — never drop data. This is your only persistent storage between steps.",
+  "next_goal": "What you will do next and why — one clear sentence",
+  "reasoning": "Brief explanation of what you're doing right now",
+  "actions": [
+    {
+      "action": "click" | "type" | "navigate" | "back" | "select" | "scroll" | "keyboard" | "wait" | "press_and_hold" | "click_cloudflare" | "ask_user" | "done" | "fail",
+      "ref": "element ref number (for click, type, select)",
+      "text": "text to type (for type) or question (for ask_user)",
+      "url": "URL (for navigate)",
+      "key": "key name (for keyboard) — e.g. Enter, Escape, Tab, ArrowDown, ArrowUp",
+      "options": ["values (for select)"],
+      "direction": "up" | "down" (for scroll),
+      "answer": "direct answer to the user's question (for done)"
+    }
+  ]
 }
+
+You can return 1-4 actions per response. They execute sequentially. Use multiple actions for:
+- Form filling: click field → type value → click next field → type value
+- Sequential clicks: click a tab → click an item in the tab
+- Simple sequences where you don't need to see the page change between actions
+Use a single action when:
+- Navigation (page will change — you need the new snapshot)
+- After typing in autocomplete/search fields (need to see dropdown)
+- When uncertain about the page state
+- Terminal actions: "done", "fail", "ask_user" must always be the LAST action
 
 Rules:
 - Use exact ref numbers from the snapshot.
@@ -81,24 +98,79 @@ When you hit a wall:
 Before giving up:
 - If one approach fails, try a different path. Don't repeat the same failed action.
 - If the results page doesn't show details, click into individual listings.
-- Only "fail" after you've genuinely exhausted your options.`;
+- Only "fail" after you've genuinely exhausted your options.
+
+Before calling "done":
+- Re-read the original task. Check every requirement against your findings.
+- DATA GROUNDING: Every value in your answer MUST appear verbatim in a snapshot you saw. Never fill gaps with your training knowledge. If you didn't see it on the page, don't include it.
+- Verify your actions actually completed by checking the page state, not just assuming.
+- If any requirement is uncertain or unverified, say so in your answer rather than guessing.`;
+
+const LAST_STEP_PROMPT = `This is your FINAL step. You MUST respond with "done" or "fail" — no other action is allowed.
+
+Respond with valid JSON:
+{
+  "evaluation_previous_goal": "Did the previous action succeed?",
+  "memory": "Your accumulated findings",
+  "reasoning": "Final assessment",
+  "action": "done" or "fail",
+  "answer": "Your complete answer with all findings. Structure with sections and bullet points. Only include data you saw on actual pages — never fill gaps with training knowledge."
+}
+
+If you gathered useful data, use "done" with a structured answer. If not, use "fail" with what you tried.`;
+
+function isPageReady(snapshot: string): 'ready' | 'empty' | 'skeleton' {
+  const lines = snapshot.split('\n').filter((l) => l.trim() !== '');
+  const elementCount = lines.length;
+  const textLength = lines.reduce((sum, l) => sum + l.replace(/\[.*?\]/g, '').trim().length, 0);
+
+  if (elementCount < 10) return 'empty';
+  if (elementCount > 20 && textLength < elementCount * 5) return 'skeleton';
+  return 'ready';
+}
+
+const PAGE_READY_RETRIES = 2;
+const PAGE_READY_WAIT_MS = 2000;
 
 async function safeSnapshot(page: CrawlPage): Promise<string> {
+  let snapshot: string;
   try {
-    return (await page.snapshot({ interactive: true, compact: true })).snapshot;
-  } catch {
-    await page.waitFor({ timeMs: 2000 });
+    snapshot = (await page.snapshot({ interactive: true, compact: true })).snapshot;
+  } catch (firstErr) {
+    logger.warn({ error: firstErr instanceof Error ? firstErr.message : 'unknown' }, 'Snapshot failed — retrying');
+    await page.waitFor({ timeMs: PAGE_READY_WAIT_MS });
     try {
-      return (await page.snapshot({ interactive: true, compact: true })).snapshot;
+      snapshot = (await page.snapshot({ interactive: true, compact: true })).snapshot;
     } catch (err) {
       logger.error({ err }, 'Snapshot failed after retry');
       return '[Snapshot unavailable — page may be loading]';
     }
   }
+
+  // Wait for page to fully load if it looks empty or skeleton-like
+  const state = isPageReady(snapshot);
+  if (state !== 'ready') {
+    logger.info({ state }, 'Page not ready — waiting for content');
+    for (let i = 0; i < PAGE_READY_RETRIES; i++) {
+      await page.waitFor({ timeMs: PAGE_READY_WAIT_MS });
+      try {
+        snapshot = (await page.snapshot({ interactive: true, compact: true })).snapshot;
+        if (isPageReady(snapshot) === 'ready') break;
+      } catch (retryErr) {
+        logger.warn(
+          { attempt: i + 1, error: retryErr instanceof Error ? retryErr.message : 'unknown' },
+          'Snapshot retry failed during page-ready wait',
+        );
+      }
+    }
+  }
+
+  return snapshot;
 }
 
 const SKILL_INJECT_MAX_STEP = 2;
 const HISTORY_RECENT_WINDOW = 10;
+const MAX_ACTIONS_PER_STEP = 4;
 
 function truncateHistory(history: AgentStep[]): string {
   if (history.length <= HISTORY_RECENT_WINDOW) {
@@ -140,11 +212,21 @@ function formatStep(step: AgentStep): string {
   return line;
 }
 
+function getLastMemory(history: AgentStep[]): string | undefined {
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].action.memory !== undefined && history[i].action.memory !== '') {
+      return history[i].action.memory;
+    }
+  }
+  return undefined;
+}
+
 interface BuildUserMessageOptions {
   plan?: string | null;
   tabCount?: number;
   domainSkill?: CatalogSkill | null;
   stepsRemaining?: number;
+  maxSteps?: number;
 }
 
 function buildUserMessage(
@@ -155,15 +237,24 @@ function buildUserMessage(
   title: string,
   opts?: BuildUserMessageOptions,
 ): string {
-  const { plan, tabCount, domainSkill, stepsRemaining } = opts ?? {};
+  const { plan, tabCount, domainSkill, stepsRemaining, maxSteps: totalSteps } = opts ?? {};
   let message = `Task: ${prompt}\n`;
 
   if (plan !== undefined && plan !== null && plan !== '') {
     message += `\nPlan: ${plan}\n`;
   }
 
-  if (stepsRemaining !== undefined && stepsRemaining <= 10) {
+  if (stepsRemaining !== undefined && stepsRemaining === 0) {
+    message += `\n🚨 FINAL STEP. You MUST use "done" now. Summarize everything you've found — this is your last chance to deliver an answer.\n`;
+  } else if (stepsRemaining !== undefined && stepsRemaining <= 10) {
     message += `\n⚠ WARNING: Only ${String(stepsRemaining)} steps remaining. Wrap up now — summarize what you've found and use "done" or "fail".\n`;
+  } else if (
+    stepsRemaining !== undefined &&
+    totalSteps !== undefined &&
+    totalSteps > 0 &&
+    (totalSteps - stepsRemaining) / totalSteps >= 0.75
+  ) {
+    message += `\n⚠ You've used 75% of your step budget. Start consolidating your findings. If you have enough data, use "done" soon.\n`;
   }
 
   if (domainSkill !== undefined && domainSkill !== null) {
@@ -181,6 +272,11 @@ function buildUserMessage(
       }
     }
     message += '--- END PLAYBOOK ---\n';
+  }
+
+  const lastMemory = getLastMemory(history);
+  if (lastMemory !== undefined) {
+    message += `\n🧠 Your memory from previous steps:\n${lastMemory}\n`;
   }
 
   message += `\nCurrent page: ${title}\nURL: ${url}\n`;
@@ -209,25 +305,60 @@ function buildUserMessage(
   return message;
 }
 
-function parseAction(parsed: Record<string, unknown>): AgentAction {
-  if (typeof parsed.action !== 'string') {
-    throw new Error('Response missing or invalid "action" field — expected a string');
-  }
+interface ParsedActionItem {
+  action: string;
+  ref?: string;
+  text?: string;
+  url?: string;
+  key?: string;
+  options?: string[];
+  direction?: string;
+  answer?: string;
+}
+
+function parseActions(parsed: Record<string, unknown>): AgentAction[] {
   if (typeof parsed.reasoning !== 'string') {
     throw new Error('Response missing or invalid "reasoning" field — expected a string');
   }
 
-  return {
-    action: parsed.action as AgentAction['action'],
+  const thinking = {
     reasoning: parsed.reasoning,
-    answer: parsed.answer as string | undefined,
-    ref: parsed.ref as string | undefined,
-    text: parsed.text as string | undefined,
-    url: parsed.url as string | undefined,
-    key: parsed.key as string | undefined,
-    options: parsed.options as string[] | undefined,
-    direction: parsed.direction as AgentAction['direction'],
+    memory: parsed.memory as string | undefined,
+    next_goal: parsed.next_goal as string | undefined,
+    evaluation_previous_goal: parsed.evaluation_previous_goal as string | undefined,
   };
+
+  // Support both "actions" array and legacy single "action" field
+  let items: ParsedActionItem[];
+  if (Array.isArray(parsed.actions)) {
+    items = parsed.actions as ParsedActionItem[];
+  } else if (typeof parsed.action === 'string') {
+    items = [parsed as unknown as ParsedActionItem];
+  } else {
+    throw new Error('Response missing both "actions" array and "action" field');
+  }
+
+  if (items.length === 0) {
+    throw new Error('Response "actions" array is empty');
+  }
+
+  return items.slice(0, MAX_ACTIONS_PER_STEP).map((item, i) => {
+    if (typeof item.action !== 'string') {
+      throw new Error(`Action at index ${String(i)} missing "action" field`);
+    }
+    return {
+      action: item.action as AgentAction['action'],
+      // Thinking fields only on the first action
+      ...(i === 0 ? thinking : { reasoning: `Batch action ${String(i + 1)}: ${item.action}` }),
+      answer: item.answer,
+      ref: item.ref,
+      text: item.text,
+      url: item.url,
+      key: item.key,
+      options: item.options,
+      direction: item.direction as AgentAction['direction'],
+    };
+  });
 }
 
 async function executeAction(action: AgentAction, page: CrawlPage): Promise<void> {
@@ -306,6 +437,29 @@ function getWaitMs(action: AgentAction['action']): number {
   }
 }
 
+async function getFinalSummary(prompt: string, history: AgentStep[]): Promise<string | undefined> {
+  try {
+    const lastMemory = getLastMemory(history);
+    const steps = history
+      .slice(-10)
+      .map((s) => `${s.action.action}: ${s.action.reasoning}`)
+      .join('\n');
+    const result = await llmJson<{ answer: string }>({
+      system:
+        'The browser agent is being stopped due to repeated failures. Summarize what was accomplished and any partial findings. Respond with JSON: {"answer": "your summary"}',
+      message: `Task: ${prompt}\n\nMemory:\n${lastMemory ?? 'none'}\n\nRecent steps:\n${steps}`,
+      maxTokens: 512,
+    });
+    return result.answer;
+  } catch (summaryErr) {
+    logger.warn(
+      { error: summaryErr instanceof Error ? summaryErr.message : 'unknown' },
+      'Failed to generate final summary',
+    );
+    return undefined;
+  }
+}
+
 export async function runAgentLoop(
   prompt: string,
   page: CrawlPage,
@@ -320,7 +474,9 @@ export async function runAgentLoop(
   const startTime = Date.now();
   const tabManager = browser !== undefined ? new TabManager(page) : null;
   let consecutiveParseFailures = 0;
+  let consecutiveActionFailures = 0;
   const MAX_PARSE_FAILURES = 3;
+  const MAX_ACTION_FAILURES = 3;
 
   let planText: string | null = null;
   try {
@@ -350,7 +506,8 @@ Respond with JSON: {"plan": "your plan here"}`,
     logger.error({ err }, 'Failed to generate plan');
   }
 
-  for (let step = 0; step < maxSteps; step++) {
+  let step = 0;
+  while (step < maxSteps) {
     if (signal.aborted) {
       return {
         success: false,
@@ -392,23 +549,31 @@ Respond with JSON: {"plan": "your plan here"}`,
       tabCount,
       domainSkill: skillForStep,
       stepsRemaining,
+      maxSteps,
     });
 
-    let action: AgentAction;
+    // On the last step, force the agent to produce a final answer
+    const isLastStep = stepsRemaining === 0;
+    const systemPrompt = isLastStep ? LAST_STEP_PROMPT : SYSTEM_PROMPT;
+
+    let actions: AgentAction[];
     try {
       const parsed = await llmJson<Record<string, unknown>>({
-        system: SYSTEM_PROMPT,
+        system: systemPrompt,
         message: userMessage,
         maxTokens: LLM_MAX_TOKENS,
       });
-      action = parseAction(parsed);
+      actions = parseActions(parsed);
       consecutiveParseFailures = 0;
-      logger.info({ step, action: action.action, reasoning: action.reasoning }, 'Agent step');
+      logger.info(
+        { step, actionCount: actions.length, firstAction: actions[0].action, reasoning: actions[0].reasoning },
+        'Agent step',
+      );
 
-      if (detectLoop(action, history)) {
-        logger.warn({ step }, 'Loop detected');
-        history.push(loopRecoveryStep(step));
-        continue;
+      const loopNudge = detectLoop(actions[0], history);
+      if (loopNudge !== null) {
+        logger.warn({ step, level: loopNudge.level }, 'Loop nudge');
+        actions[0].error_feedback = loopNudge.message;
       }
     } catch (err) {
       consecutiveParseFailures++;
@@ -426,132 +591,225 @@ Respond with JSON: {"plan": "your plan here"}`,
           duration_ms: Date.now() - startTime,
         };
       }
+      step++;
       continue;
     }
 
-    const agentStep: AgentStep = {
-      step,
-      action,
-      url,
-      page_title: title,
-      timestamp: new Date().toISOString(),
-    };
+    // Execute batch of actions sequentially
+    for (const action of actions) {
+      if (step >= maxSteps) break;
 
-    history.push(agentStep);
-
-    emit('step', {
-      step,
-      action: action.action,
-      reasoning: action.reasoning,
-      url,
-      page_title: title,
-    });
-
-    if (action.action === 'done') {
-      return {
-        success: true,
-        steps: history,
-        answer: action.answer,
-        duration_ms: Date.now() - startTime,
-        final_url: url,
+      const agentStep: AgentStep = {
+        step,
+        action,
+        url: await page.url(),
+        page_title: await page.title(),
+        timestamp: new Date().toISOString(),
       };
-    }
 
-    if (action.action === 'fail') {
-      return {
-        success: false,
-        steps: history,
-        error: action.reasoning,
-        duration_ms: Date.now() - startTime,
-        final_url: url,
-      };
-    }
+      history.push(agentStep);
 
-    if (action.action === 'ask_user') {
-      emit('ask_user', { step, question: action.text ?? action.reasoning });
+      emit('step', {
+        step,
+        action: action.action,
+        reasoning: action.reasoning,
+        memory: action.memory,
+        next_goal: action.next_goal,
+        evaluation_previous_goal: action.evaluation_previous_goal,
+        url: agentStep.url,
+        page_title: agentStep.page_title,
+      });
 
-      if (waitForUser === undefined) {
+      // --- Terminal actions ---
+
+      if (action.action === 'done') {
+        return {
+          success: true,
+          steps: history,
+          answer: action.answer,
+          duration_ms: Date.now() - startTime,
+          final_url: agentStep.url,
+        };
+      }
+
+      if (action.action === 'fail') {
         return {
           success: false,
           steps: history,
-          error: 'Agent requested user input but interactive mode is not available',
+          error: action.reasoning,
           duration_ms: Date.now() - startTime,
+          final_url: agentStep.url,
         };
       }
+
+      if (action.action === 'ask_user') {
+        emit('ask_user', { step, question: action.text ?? action.reasoning });
+
+        if (waitForUser === undefined) {
+          return {
+            success: false,
+            steps: history,
+            error: 'Agent requested user input but interactive mode is not available',
+            duration_ms: Date.now() - startTime,
+          };
+        }
+
+        try {
+          const userResponse = await waitForUser();
+          agentStep.user_response = userResponse;
+          emit('user_response', { step, text: userResponse });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Failed to get user response';
+          emit('step_error', { step, error: message });
+          return {
+            success: false,
+            steps: history,
+            error: message,
+            duration_ms: Date.now() - startTime,
+          };
+        }
+        step++;
+        break; // Need new snapshot after user response
+      }
+
+      // --- Special actions (break batch — need new snapshot) ---
+
+      if (action.action === 'press_and_hold') {
+        await pressAndHold(page);
+        step++;
+        break;
+      }
+
+      if (action.action === 'click_cloudflare') {
+        await clickCloudflareCheckbox(page);
+        step++;
+        break;
+      }
+
+      // --- Normal actions ---
 
       try {
-        const userResponse = await waitForUser();
-        agentStep.user_response = userResponse;
-        emit('user_response', { step, text: userResponse });
-        continue;
+        await executeAction(action, page);
+        consecutiveActionFailures = 0;
+
+        // After typing, detect autocomplete/combobox fields
+        if (action.action === 'type') {
+          await page.waitFor({ timeMs: 400 });
+          try {
+            const postTypeSnapshot = (await page.snapshot({ interactive: true, compact: true })).snapshot;
+            if (/combobox|listbox|aria-autocomplete|suggestion|dropdown/i.test(postTypeSnapshot)) {
+              agentStep.action.error_feedback =
+                'AUTOCOMPLETE DETECTED: A dropdown/suggestion list appeared after typing. Wait for it to fully load, then click the correct suggestion. Do NOT press Enter.';
+              step++;
+              break; // Break batch — agent needs to see the dropdown
+            }
+          } catch (snapErr) {
+            logger.warn({ error: snapErr instanceof Error ? snapErr.message : 'unknown' }, 'Post-type snapshot failed');
+          }
+        }
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to get user response';
-        emit('step_error', { step, error: message });
-        return {
-          success: false,
-          steps: history,
-          error: message,
-          duration_ms: Date.now() - startTime,
-        };
-      }
-    }
-
-    if (action.action === 'press_and_hold') {
-      await pressAndHold(page);
-      continue;
-    }
-
-    if (action.action === 'click_cloudflare') {
-      await clickCloudflareCheckbox(page);
-      continue;
-    }
-
-    try {
-      await executeAction(action, page);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Action execution failed';
-      logger.error({ step, action: action.action, error: message }, 'Action execution failed');
-      emit('step_error', { step, action: action.action, error: message });
-      agentStep.action.error_feedback = message;
-      await page.waitFor({ timeMs: 1000 });
-
-      if (await detectPopup(page)) {
-        await dismissPopup(page);
-        continue;
-      }
-    }
-
-    if (tabManager !== null && browser !== undefined && action.action === 'click') {
-      const newPage = await tabManager.checkForNewTab(browser);
-      if (newPage !== null) {
-        try {
-          const newUrl = await newPage.url();
-          const newTitle = await newPage.title();
-          page = newPage;
-          history.push({
+        consecutiveActionFailures++;
+        const message = err instanceof Error ? err.message : 'Action execution failed';
+        logger.error(
+          {
             step,
-            action: { action: 'navigate', reasoning: `Click opened a new tab: ${newTitle}` },
-            url: newUrl,
-            page_title: newTitle,
-            timestamp: new Date().toISOString(),
-          });
-        } catch {
-          logger.info('tab-manager: new tab not accessible, staying on current page');
+            action: action.action,
+            attempt: consecutiveActionFailures,
+            maxAttempts: MAX_ACTION_FAILURES,
+            error: message,
+          },
+          'Action execution failed',
+        );
+        emit('step_error', { step, action: action.action, error: message });
+        agentStep.action.error_feedback = message;
+
+        if (consecutiveActionFailures >= MAX_ACTION_FAILURES) {
+          logger.warn({ step, consecutiveActionFailures }, 'Too many consecutive action failures');
+
+          if (waitForUser !== undefined) {
+            const errors = history
+              .slice(-MAX_ACTION_FAILURES)
+              .filter((s) => s.action.error_feedback !== undefined)
+              .map((s) => s.action.error_feedback)
+              .join('; ');
+            emit('ask_user', {
+              step,
+              question: `I've failed ${String(MAX_ACTION_FAILURES)} actions in a row (${errors}). Can you help me get past this, or should I give up?`,
+            });
+
+            try {
+              const userResponse = await waitForUser();
+              agentStep.user_response = userResponse;
+              emit('user_response', { step, text: userResponse });
+              consecutiveActionFailures = 0;
+              step++;
+              break;
+            } catch (waitErr) {
+              const waitMsg = waitErr instanceof Error ? waitErr.message : 'No response';
+              logger.warn({ step, error: waitMsg }, 'User did not respond to failure prompt — aborting');
+            }
+          }
+
+          const failSummary = await getFinalSummary(prompt, history);
+          return {
+            success: false,
+            steps: history,
+            answer: failSummary,
+            error: `${String(MAX_ACTION_FAILURES)} consecutive action failures — aborting`,
+            duration_ms: Date.now() - startTime,
+            final_url: agentStep.url,
+          };
+        }
+
+        await page.waitFor({ timeMs: 1000 });
+
+        if (await detectPopup(page)) {
+          await dismissPopup(page);
+        }
+        step++;
+        break; // Break batch on failure — need new snapshot
+      }
+
+      // Check for new tabs after click
+      if (tabManager !== null && browser !== undefined && action.action === 'click') {
+        const newPage = await tabManager.checkForNewTab(browser);
+        if (newPage !== null) {
+          try {
+            const newUrl = await newPage.url();
+            const newTitle = await newPage.title();
+            page = newPage;
+            history.push({
+              step,
+              action: { action: 'navigate', reasoning: `Click opened a new tab: ${newTitle}` },
+              url: newUrl,
+              page_title: newTitle,
+              timestamp: new Date().toISOString(),
+            });
+          } catch (tabErr) {
+            logger.info(
+              { error: tabErr instanceof Error ? tabErr.message : 'unknown' },
+              'tab-manager: new tab not accessible, staying on current page',
+            );
+          }
+          step++;
+          break; // New tab opened — need new snapshot
         }
       }
-    }
 
-    const waitMs = getWaitMs(action.action);
-    await page.waitFor({ timeMs: waitMs });
+      const waitMs = getWaitMs(action.action);
+      await page.waitFor({ timeMs: waitMs });
+      step++;
+    }
   }
 
-  // maxSteps reached
+  // maxSteps reached — get a final summary of what was accomplished
   logger.warn({ steps: history.length, maxSteps }, 'Agent hit step limit');
-  const lastReasoning = history.length > 0 ? history[history.length - 1].action.reasoning : '';
+  const summary = await getFinalSummary(prompt, history);
   return {
     success: false,
     steps: history,
-    error: `Reached maximum step limit (${String(maxSteps)}). Last reasoning: ${lastReasoning.substring(0, 200)}`,
+    answer: summary,
+    error: `Reached maximum step limit (${String(maxSteps)})`,
     duration_ms: Date.now() - startTime,
     final_url: history.length > 0 ? history[history.length - 1].url : undefined,
   };

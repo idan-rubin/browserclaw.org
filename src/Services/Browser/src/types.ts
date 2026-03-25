@@ -34,6 +34,12 @@ export type AgentActionType =
 export interface AgentAction {
   action: AgentActionType;
   reasoning: string;
+  /** Accumulated facts, data, findings across steps — the agent's persistent scratchpad */
+  memory?: string;
+  /** What the agent plans to do next — maintains goal focus across long runs */
+  next_goal?: string;
+  /** Assessment of whether the previous action achieved its goal */
+  evaluation_previous_goal?: string;
   answer?: string;
   ref?: string;
   text?: string;
