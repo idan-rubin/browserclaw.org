@@ -10,7 +10,7 @@ import {
   resolveUserResponse,
 } from './session-manager.js';
 import { HttpError } from './types.js';
-import type { CreateSessionRequest } from './types.js';
+import type { CreateSessionRequest, LlmConfig } from './types.js';
 
 const MAX_BODY_BYTES = 100 * 1024; // 100KB
 
@@ -106,7 +106,27 @@ const routes: Route[] = [
       const hasValidToken = req.headers.authorization !== undefined;
       const skipModeration = hasValidToken && body.skip_moderation === true;
 
-      const { session } = await createSession(body.prompt, url, headless, clientIp, skipModeration);
+      // Validate BYOK LLM config if provided
+      let llmConfig: LlmConfig | undefined;
+      if (body.llm_config !== undefined) {
+        const { provider, model, api_key } = body.llm_config;
+        const validProviders = ['anthropic', 'openai', 'gemini'];
+        if (!validProviders.includes(provider)) {
+          sendError(res, 400, `Invalid provider. Must be one of: ${validProviders.join(', ')}`);
+          return;
+        }
+        if (typeof model !== 'string' || model.trim() === '') {
+          sendError(res, 400, 'model is required');
+          return;
+        }
+        if (typeof api_key !== 'string' || api_key.trim() === '') {
+          sendError(res, 400, 'api_key is required');
+          return;
+        }
+        llmConfig = { provider, model: model.trim(), api_key: api_key.trim() };
+      }
+
+      const { session } = await createSession(body.prompt, url, headless, clientIp, skipModeration, llmConfig);
 
       json(res, 201, {
         session_id: session.id,

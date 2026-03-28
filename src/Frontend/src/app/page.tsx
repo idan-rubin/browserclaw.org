@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { LlmConfigPanel, useLlmConfig } from '@/components/llm-config';
 import { isLocalBrowserMode } from '@/lib/env';
 
 const RUN_BUTTON_CLASS =
@@ -47,6 +48,7 @@ export default function HomePage() {
   const abortRef = useRef<AbortController | null>(null);
   const router = useRouter();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const llm = useLlmConfig();
 
   useEffect(() => {
     if (modal?.type !== 'processing') {
@@ -109,9 +111,11 @@ export default function HomePage() {
     return undefined;
   }, [autoResize]);
 
+  const hasApiKey = llm.apiKey.trim() !== '';
+
   async function handleRun(skipModeration = false) {
     const trimmed = prompt.trim();
-    if (!trimmed) return;
+    if (!trimmed || !hasApiKey) return;
 
     abortRef.current?.abort();
     const abort = new AbortController();
@@ -120,12 +124,14 @@ export default function HomePage() {
     setModal({ type: 'processing', step: isLocalBrowserMode() ? 'launching' : 'checking' });
 
     try {
+      const llmConfig = llm.getConfig();
       const res = await fetch('/api/v1/runs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: trimmed,
           skip_moderation: isLocalBrowserMode() || skipModeration,
+          ...(llmConfig ? { llm_config: llmConfig } : {}),
         }),
         signal: abort.signal,
       });
@@ -227,7 +233,7 @@ export default function HomePage() {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
-                      void handleRun();
+                      if (hasApiKey) void handleRun();
                     }
                   }}
                   placeholder="What do you want the browser to do?"
@@ -235,33 +241,37 @@ export default function HomePage() {
                   style={{ maxHeight: '200px' }}
                   disabled={!!modal}
                 />
-                {!prompt && (
-                  <button
-                    onClick={() => {
-                      void handleRun();
-                    }}
-                    disabled={!!modal || !prompt.trim()}
-                    className={RUN_BUTTON_CLASS}
-                  >
-                    Run
-                  </button>
-                )}
               </div>
-              {prompt && (
-                <div className="flex items-center justify-end gap-3 px-2 pt-1">
+              <div className="flex items-center justify-end gap-3 px-2 pt-1">
+                {prompt && !hasApiKey && (
+                  <span className="text-xs text-amber-500/80">Enter your API key below to run</span>
+                )}
+                {prompt && hasApiKey && (
                   <span className="hidden text-sm text-muted-foreground/50 sm:inline">Shift+Enter for new line</span>
-                  <button
-                    onClick={() => {
-                      void handleRun();
-                    }}
-                    disabled={!!modal || !prompt.trim()}
-                    className={RUN_BUTTON_CLASS}
-                  >
-                    Run
-                  </button>
-                </div>
-              )}
+                )}
+                <button
+                  onClick={() => {
+                    void handleRun();
+                  }}
+                  disabled={!!modal || !prompt.trim() || !hasApiKey}
+                  className={RUN_BUTTON_CLASS}
+                >
+                  Run
+                </button>
+              </div>
             </div>
+          </div>
+
+          {/* LLM Config */}
+          <div className="mt-3 px-1">
+            <LlmConfigPanel
+              provider={llm.provider}
+              setProvider={llm.setProvider}
+              model={llm.model}
+              setModel={llm.setModel}
+              apiKey={llm.apiKey}
+              setApiKey={llm.setApiKey}
+            />
           </div>
 
           {/* Example chips */}
