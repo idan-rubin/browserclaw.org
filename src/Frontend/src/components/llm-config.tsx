@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 
 export interface LlmConfig {
   provider: 'anthropic' | 'openai' | 'gemini';
@@ -102,74 +102,48 @@ export function LlmConfigPanel({
   apiKey: string;
   setApiKey: (k: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const models = MODELS[provider] ?? [];
 
   return (
-    <div className="w-full">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 text-xs text-muted-foreground/60 transition-colors hover:text-muted-foreground"
-      >
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`transition-transform ${open ? 'rotate-90' : ''}`}
+    <div className="w-full space-y-2">
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <select
+          value={provider}
+          onChange={(e) => setProvider(e.target.value as LlmConfig['provider'])}
+          className={`${SELECT_CLASS} sm:w-40`}
         >
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
-        {apiKey ? `${PROVIDERS.find((p) => p.value === provider)?.label} — ${models.find((m) => m.value === model)?.label ?? model}` : 'Bring your own API key'}
-      </button>
+          {PROVIDERS.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
+            </option>
+          ))}
+        </select>
 
-      {open && (
-        <div className="mt-3 space-y-3 rounded-xl border border-border/60 bg-card/40 p-4 backdrop-blur-sm animate-in fade-in slide-in-from-top-1 duration-200">
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <select
-              value={provider}
-              onChange={(e) => setProvider(e.target.value as LlmConfig['provider'])}
-              className={`${SELECT_CLASS} sm:w-40`}
-            >
-              {PROVIDERS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
+        <select
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          className={`${SELECT_CLASS} sm:w-48`}
+        >
+          {models.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </select>
 
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className={`${SELECT_CLASS} sm:w-48`}
-            >
-              {models.map((m) => (
-                <option key={m.value} value={m.value}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
+        <input
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder="API key"
+          autoComplete="off"
+          className="h-9 flex-1 rounded-lg border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground/40 transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20"
+        />
+      </div>
 
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="API key"
-              autoComplete="off"
-              className="h-9 flex-1 rounded-lg border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground/40 transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20"
-            />
-          </div>
-
-          <p className="text-[11px] leading-relaxed text-muted-foreground/50">
-            Your key is stored in your browser and sent to our server only to make LLM calls during your run. It is never saved.
-          </p>
-        </div>
-      )}
+      <p className="text-[11px] leading-relaxed text-muted-foreground/40">
+        Your key stays in your browser and is never saved. It is sent to our server only to make LLM calls during your run.
+      </p>
     </div>
   );
 }
