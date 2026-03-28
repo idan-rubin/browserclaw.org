@@ -241,14 +241,6 @@ export default function HomePage() {
                   style={{ maxHeight: '200px' }}
                   disabled={!!modal}
                 />
-              </div>
-              <div className="flex items-center justify-end gap-3 px-2 pt-1">
-                {prompt && !hasApiKey && (
-                  <span className="text-xs text-amber-500/80">Enter your API key below to run</span>
-                )}
-                {prompt && hasApiKey && (
-                  <span className="hidden text-sm text-muted-foreground/50 sm:inline">Shift+Enter for new line</span>
-                )}
                 <button
                   onClick={() => {
                     void handleRun();
@@ -259,6 +251,11 @@ export default function HomePage() {
                   Run
                 </button>
               </div>
+              {prompt && !hasApiKey && (
+                <div className="px-2 pt-1 text-right">
+                  <span className="text-xs text-amber-500/80">Enter your API key below to run</span>
+                </div>
+              )}
             </div>
           </div>
 
