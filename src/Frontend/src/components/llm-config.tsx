@@ -16,17 +16,16 @@ const PROVIDERS = [
 
 const MODELS: Record<string, { value: string; label: string }[]> = {
   anthropic: [
-    { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
-    { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+    { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
   ],
   openai: [
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-    { value: 'o3-mini', label: 'o3-mini' },
+    { value: 'gpt-5.4', label: 'GPT-5.4' },
+    { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
   ],
   gemini: [
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro' },
+    { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash' },
   ],
 };
 
