@@ -241,19 +241,33 @@ export default function HomePage() {
                   style={{ maxHeight: '200px' }}
                   disabled={!!modal}
                 />
-                <button
-                  onClick={() => {
-                    void handleRun();
-                  }}
-                  disabled={!!modal || !prompt.trim() || !hasApiKey}
-                  className={RUN_BUTTON_CLASS}
-                >
-                  Run
-                </button>
+                {!prompt.trim() && (
+                  <button
+                    onClick={() => {
+                      void handleRun();
+                    }}
+                    disabled={!!modal || !hasApiKey}
+                    className={RUN_BUTTON_CLASS}
+                  >
+                    Run
+                  </button>
+                )}
               </div>
-              {prompt && !hasApiKey && (
-                <div className="px-2 pt-1 text-right">
-                  <span className="text-xs text-amber-500/80">Enter your API key below to run</span>
+              {prompt.trim() && (
+                <div className="flex items-center justify-end gap-3 px-2 pt-1">
+                  {!hasApiKey && <span className="text-xs text-amber-500/80">Enter your API key below to run</span>}
+                  {hasApiKey && (
+                    <span className="hidden text-sm text-muted-foreground/50 sm:inline">Shift+Enter for new line</span>
+                  )}
+                  <button
+                    onClick={() => {
+                      void handleRun();
+                    }}
+                    disabled={!!modal || !hasApiKey}
+                    className={RUN_BUTTON_CLASS}
+                  >
+                    Run
+                  </button>
                 </div>
               )}
             </div>
