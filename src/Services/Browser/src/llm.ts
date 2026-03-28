@@ -1,8 +1,28 @@
 import OpenAI from 'openai';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { parseJsonResponse } from './parse-json-response.js';
 import { logger } from './logger.js';
+import type { LlmConfig } from './types.js';
 
 const LLM_TIMEOUT_MS = parseInt(process.env.LLM_TIMEOUT_MS ?? '30000', 10);
+
+// ── BYOK: per-session LLM config via AsyncLocalStorage ──────────────────────
+const sessionLlmStore = new AsyncLocalStorage<LlmConfig>();
+
+/**
+ * Run an async function with a BYOK LLM config scoped to the current async context.
+ * All llm() / llmJson() calls inside `fn` will use the provided config
+ * instead of the server's environment variables.
+ */
+export function runWithLlmConfig<T>(config: LlmConfig, fn: () => Promise<T>): Promise<T> {
+  return sessionLlmStore.run(config, fn);
+}
+
+const BYOK_PROVIDERS: Record<string, { baseURL: string; useMaxCompletionTokens: boolean }> = {
+  anthropic: { baseURL: 'https://api.anthropic.com/v1/', useMaxCompletionTokens: false },
+  openai: { baseURL: 'https://api.openai.com/v1', useMaxCompletionTokens: true },
+  gemini: { baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/', useMaxCompletionTokens: false },
+};
 
 export interface ProviderConfig {
   provider: string;
@@ -194,8 +214,14 @@ async function callCodexResponsesAPI(provider: ProviderConfig, model: string, re
   throw new Error('Codex Responses API returned no completed response');
 }
 
-async function callChatCompletions(provider: ProviderConfig, model: string, req: LLMRequest): Promise<LLMResponse> {
-  const response = await getClient(provider).chat.completions.create({
+async function callChatCompletions(
+  provider: ProviderConfig,
+  model: string,
+  req: LLMRequest,
+  clientOverride?: OpenAI,
+): Promise<LLMResponse> {
+  const client = clientOverride ?? getClient(provider);
+  const response = await client.chat.completions.create({
     model,
     ...(provider.useMaxCompletionTokens ? { max_completion_tokens: req.maxTokens } : { max_tokens: req.maxTokens }),
     messages: [
@@ -242,8 +268,41 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
+function resolveByokProvider(config: LlmConfig): ProviderConfig {
+  const byok = BYOK_PROVIDERS[config.provider];
+  if (!byok) throw new Error(`Unsupported BYOK provider: ${config.provider}`);
+  return {
+    provider: config.provider,
+    label: config.provider,
+    baseURL: byok.baseURL,
+    apiKeyEnv: '', // not used for BYOK
+    useMaxCompletionTokens: byok.useMaxCompletionTokens,
+  };
+}
+
+function getByokClient(config: LlmConfig, providerConfig: ProviderConfig): OpenAI {
+  return new OpenAI({
+    apiKey: config.api_key,
+    baseURL: providerConfig.baseURL,
+  });
+}
+
 export async function llm(req: LLMRequest): Promise<LLMResponse> {
   _llmCallCount++;
+
+  // Check for BYOK session config first
+  const byokConfig = sessionLlmStore.getStore();
+  if (byokConfig) {
+    const providerConfig = resolveByokProvider(byokConfig);
+    const client = getByokClient(byokConfig, providerConfig);
+    return await withTimeout(
+      callChatCompletions(providerConfig, byokConfig.model, req, client),
+      LLM_TIMEOUT_MS,
+      'LLM call (BYOK)',
+    );
+  }
+
+  // Fall back to server-configured provider
   const provider = getActiveProvider();
   const model = getModel();
   const isSubscription = provider.provider === 'openai-oauth';

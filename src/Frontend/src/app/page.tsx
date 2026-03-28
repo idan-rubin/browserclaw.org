@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { LlmConfigPanel, useLlmConfig } from '@/components/llm-config';
 import { isLocalBrowserMode } from '@/lib/env';
 
 const RUN_BUTTON_CLASS =
@@ -47,6 +48,7 @@ export default function HomePage() {
   const abortRef = useRef<AbortController | null>(null);
   const router = useRouter();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const llm = useLlmConfig();
 
   useEffect(() => {
     if (modal?.type !== 'processing') {
@@ -120,12 +122,14 @@ export default function HomePage() {
     setModal({ type: 'processing', step: isLocalBrowserMode() ? 'launching' : 'checking' });
 
     try {
+      const llmConfig = llm.getConfig();
       const res = await fetch('/api/v1/runs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: trimmed,
           skip_moderation: isLocalBrowserMode() || skipModeration,
+          ...(llmConfig ? { llm_config: llmConfig } : {}),
         }),
         signal: abort.signal,
       });
@@ -262,6 +266,18 @@ export default function HomePage() {
                 </div>
               )}
             </div>
+          </div>
+
+          {/* LLM Config */}
+          <div className="mt-3 px-1">
+            <LlmConfigPanel
+              provider={llm.provider}
+              setProvider={llm.setProvider}
+              model={llm.model}
+              setModel={llm.setModel}
+              apiKey={llm.apiKey}
+              setApiKey={llm.setApiKey}
+            />
           </div>
 
           {/* Example chips */}

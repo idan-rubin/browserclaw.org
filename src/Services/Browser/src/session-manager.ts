@@ -1,14 +1,14 @@
 import { BrowserClaw, type CrawlPage } from 'browserclaw';
 import type { ServerResponse } from 'node:http';
 import { HttpError } from './types.js';
-import type { Session, SessionStatus, AgentLoopResult, SkillOutput, CatalogSkill, DomainSkillEntry } from './types.js';
+import type { Session, SessionStatus, AgentLoopResult, SkillOutput, CatalogSkill, DomainSkillEntry, LlmConfig } from './types.js';
 import { runAgentLoop } from './agent-loop.js';
 import { generateSkill, generateSkillTags } from './skill-generator.js';
 import { judgeRun } from './judge.js';
 import { moderatePrompt } from './content-policy.js';
 import { logPrompt } from './prompt-log.js';
 import { requireEnvInt, USER_RESPONSE_TIMEOUT_MS } from './config.js';
-import { getLLMCallCount, resetLLMCallCount } from './llm.js';
+import { getLLMCallCount, resetLLMCallCount, runWithLlmConfig } from './llm.js';
 import { extractDomain, getSkillForDomain, getSkillsForDomains, saveSkill } from './skill-store.js';
 import { logger } from './logger.js';
 
@@ -29,6 +29,7 @@ interface ManagedSession {
   skillTags: string[];
   domainSkills: DomainSkillEntry[];
   abortController: AbortController;
+  llmConfig: LlmConfig | undefined;
   pendingUserResponse: {
     resolve: (text: string) => void;
     reject: (err: Error) => void;
@@ -125,6 +126,7 @@ export async function createSession(
   headless: boolean | undefined,
   ip: string,
   skipModeration?: boolean,
+  llmConfig?: LlmConfig,
 ): Promise<{ session: Session }> {
   if (sessions.size >= MAX_SESSIONS) {
     throw new HttpError(429, `Maximum concurrent sessions (${String(MAX_SESSIONS)}) reached`);
@@ -192,6 +194,7 @@ export async function createSession(
     skillTags: [],
     domainSkills: [],
     abortController: new AbortController(),
+    llmConfig,
     pendingUserResponse: null,
   };
 
@@ -259,69 +262,79 @@ async function startAgentLoop(sessionId: string): Promise<void> {
       }
     }
 
-    resetLLMCallCount();
-    const waitForUser = () => waitForUserResponse(sessionId);
-    const result = await runAgentLoop(
-      managed.prompt,
-      managed.page,
-      emitter,
-      managed.abortController.signal,
-      waitForUser,
-      managed.browser,
-      domainSkill,
-    );
-    const llmCalls = getLLMCallCount();
-
-    managed.result = result;
-    managed.status = result.success ? 'completed' : 'failed';
-
-    // Capture domain from first navigate action if not set
-    if (managed.domain === null) {
-      const nav = result.steps.find(
-        (s) => s.action.action === 'navigate' && s.action.url !== undefined && s.action.url !== '',
+    // All LLM work (agent loop + skill gen + judging) runs inside the BYOK
+    // config scope when the user provides their own key.
+    const runAllLlmWork = async () => {
+      resetLLMCallCount();
+      const waitForUser = () => waitForUserResponse(sessionId);
+      const result = await runAgentLoop(
+        managed.prompt,
+        managed.page,
+        emitter,
+        managed.abortController.signal,
+        waitForUser,
+        managed.browser,
+        domainSkill,
       );
-      if (nav?.action.url !== undefined && nav.action.url !== '') {
-        managed.domain = extractDomain(nav.action.url);
-      } else if (result.final_url !== undefined && result.final_url !== '') {
-        managed.domain = extractDomain(result.final_url);
-      }
-    }
+      const llmCalls = getLLMCallCount();
 
-    if (result.success) {
-      skillOutcome = await tryGenerateSkill(managed, emitter, domainSkill);
-      await aggregateDomainSkills(managed, domainSkill, emitter);
-      emitter('completed', {
-        steps_completed: result.steps.length,
+      managed.result = result;
+      managed.status = result.success ? 'completed' : 'failed';
+
+      // Capture domain from first navigate action if not set
+      if (managed.domain === null) {
+        const nav = result.steps.find(
+          (s) => s.action.action === 'navigate' && s.action.url !== undefined && s.action.url !== '',
+        );
+        if (nav?.action.url !== undefined && nav.action.url !== '') {
+          managed.domain = extractDomain(nav.action.url);
+        } else if (result.final_url !== undefined && result.final_url !== '') {
+          managed.domain = extractDomain(result.final_url);
+        }
+      }
+
+      if (result.success) {
+        skillOutcome = await tryGenerateSkill(managed, emitter, domainSkill);
+        await aggregateDomainSkills(managed, domainSkill, emitter);
+        emitter('completed', {
+          steps_completed: result.steps.length,
+          duration_ms: result.duration_ms,
+          llm_calls: llmCalls,
+          answer: result.answer,
+          domain: managed.domain,
+          skills_used: skillsLoadedCount > 0,
+          skills_loaded: skillsLoadedCount,
+          skill_outcome: skillOutcome,
+        });
+      } else {
+        emitter('failed', {
+          step: result.steps.length,
+          error: result.error,
+          llm_calls: llmCalls,
+        });
+      }
+
+      void logPrompt({
+        timestamp: new Date().toISOString(),
+        session_id: sessionId,
+        ip: managed.ip,
+        prompt: managed.prompt,
+        url: result.final_url ?? '',
+        status: result.success ? 'completed' : 'failed',
+        steps: result.steps.length,
         duration_ms: result.duration_ms,
-        llm_calls: llmCalls,
-        answer: result.answer,
-        domain: managed.domain,
-        skills_used: skillsLoadedCount > 0,
+        error: result.error,
+        domain: managed.domain ?? undefined,
         skills_loaded: skillsLoadedCount,
         skill_outcome: skillOutcome,
       });
-    } else {
-      emitter('failed', {
-        step: result.steps.length,
-        error: result.error,
-        llm_calls: llmCalls,
-      });
-    }
+    };
 
-    void logPrompt({
-      timestamp: new Date().toISOString(),
-      session_id: sessionId,
-      ip: managed.ip,
-      prompt: managed.prompt,
-      url: result.final_url ?? '',
-      status: result.success ? 'completed' : 'failed',
-      steps: result.steps.length,
-      duration_ms: result.duration_ms,
-      error: result.error,
-      domain: managed.domain ?? undefined,
-      skills_loaded: skillsLoadedCount,
-      skill_outcome: skillOutcome,
-    });
+    if (managed.llmConfig) {
+      await runWithLlmConfig(managed.llmConfig, runAllLlmWork);
+    } else {
+      await runAllLlmWork();
+    }
   } catch (err) {
     managed.status = 'failed';
     const message = err instanceof Error ? err.message : 'Agent loop crashed';

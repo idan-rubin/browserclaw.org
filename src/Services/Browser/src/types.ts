@@ -9,11 +9,20 @@ export interface Session {
 
 export type SessionStatus = 'pending' | 'running' | 'waiting_for_user' | 'completed' | 'failed';
 
+export type LlmProvider = 'anthropic' | 'openai' | 'gemini';
+
+export interface LlmConfig {
+  provider: LlmProvider;
+  model: string;
+  api_key: string;
+}
+
 export interface CreateSessionRequest {
   prompt: string;
   url?: string;
   headless?: boolean;
   skip_moderation?: boolean;
+  llm_config?: LlmConfig;
 }
 
 export type AgentActionType =
