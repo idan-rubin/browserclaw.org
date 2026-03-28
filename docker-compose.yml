@@ -72,7 +72,6 @@ services:
       - "traefik.http.middlewares.strip-vnc.stripprefix.prefixes=/vnc"
       - "traefik.http.services.browser.loadbalancer.server.port=6080"
     networks:
-      - public
       - internal
 
 volumes:
