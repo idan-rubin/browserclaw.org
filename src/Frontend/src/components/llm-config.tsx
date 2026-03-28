@@ -39,7 +39,7 @@ function loadConfig(): { provider: LlmConfig['provider']; model: string } {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw === null) return { provider: DEFAULT_PROVIDER, model: MODELS[DEFAULT_PROVIDER][0].value };
     const parsed = JSON.parse(raw) as Partial<LlmConfig>;
-    const provider = parsed.provider !== undefined ? parsed.provider : DEFAULT_PROVIDER;
+    const provider = parsed.provider ?? DEFAULT_PROVIDER;
     const models = MODELS[provider] ?? [];
     const model =
       parsed.model !== undefined && parsed.model !== '' && models.some((m) => m.value === parsed.model)
