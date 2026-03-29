@@ -254,12 +254,14 @@ export default function HomePage() {
                   </button>
                 )}
               </div>
-              {prompt.trim() && (
-                <div className="flex items-center justify-end gap-3 px-2 pt-1">
-                  {!hasApiKey && <span className="text-xs text-amber-500/80">Enter your API key below to run</span>}
-                  {hasApiKey && (
-                    <span className="hidden text-sm text-muted-foreground/50 sm:inline">Shift+Enter for new line</span>
-                  )}
+              <div className="flex items-center justify-end gap-3 px-2 pt-1">
+                {!hasApiKey && prompt.trim() && (
+                  <span className="text-xs text-amber-500/80">Enter your API key below to run</span>
+                )}
+                <span className="hidden text-sm text-muted-foreground/40 sm:inline">
+                  Shift+Enter for new line
+                </span>
+                {prompt.trim() && (
                   <button
                     onClick={() => {
                       void handleRun();
@@ -269,8 +271,8 @@ export default function HomePage() {
                   >
                     Run
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
 
