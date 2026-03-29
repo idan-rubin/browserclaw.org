@@ -176,6 +176,8 @@ jobs:
 
       - name: Smoke test
         if: env.SKIP == 'false'
+        env:
+          HOST: ${{ vars.HETZNER_HOST }}
         run: |
           echo "Waiting for production..."
           for i in $(seq 1 12); do
@@ -188,6 +190,15 @@ jobs:
             sleep 10
           done
           echo "✗ Smoke test failed after 2 minutes"
+          echo "--- Container diagnostics ---"
+          SSH="ssh -i ~/.ssh/hetzner root@$HOST"
+          $SSH "cd /opt/browserclaw && docker compose -f docker-compose.yml -f docker-compose.prod.yml ps" || true
+          echo "--- Frontend logs (last 50) ---"
+          $SSH "cd /opt/browserclaw && docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=50 frontend" || true
+          echo "--- Traefik logs (last 30) ---"
+          $SSH "cd /opt/browserclaw && docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=30 traefik" || true
+          echo "--- Browser logs (last 30) ---"
+          $SSH "cd /opt/browserclaw && docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=30 browser" || true
           exit 1
 
       - name: Cleanup
