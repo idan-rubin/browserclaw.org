@@ -175,7 +175,7 @@ export default function HomePage() {
       {/* Nav */}
       <nav className="relative z-10 flex items-center justify-between px-4 py-4 sm:px-10 sm:py-5">
         <Link href="/" className="font-[family-name:var(--font-heading)] text-lg sm:text-xl tracking-tight">
-          browserclaw
+          browserclaw<sup className="text-[0.5em] align-super">&#8482;</sup>
         </Link>
         <div className="flex items-center gap-2 sm:gap-8">
           <div className="hidden sm:flex items-center gap-6 text-sm text-muted-foreground">
@@ -258,9 +258,7 @@ export default function HomePage() {
                 {!hasApiKey && prompt.trim() && (
                   <span className="text-xs text-amber-500/80">Enter your API key below to run</span>
                 )}
-                <span className="hidden text-sm text-muted-foreground/40 sm:inline">
-                  Shift+Enter for new line
-                </span>
+                <span className="hidden text-sm text-muted-foreground/40 sm:inline">Shift+Enter for new line</span>
                 {prompt.trim() && (
                   <button
                     onClick={() => {
