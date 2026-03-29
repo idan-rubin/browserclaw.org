@@ -2,6 +2,7 @@ services:
   # ─── Object Storage ───────────────────────────────────────────
   minio:
     image: minio/minio:latest
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
@@ -14,9 +15,11 @@ services:
   # ─── Reverse Proxy ──────────────────────────────────────────────
   traefik:
     image: traefik:v3.4
+    restart: unless-stopped
     command:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=public"
       - "--providers.docker.endpoint=unix:///var/run/docker.sock"
       - "--entrypoints.web.address=:80"
       - "--log.level=INFO"
@@ -32,6 +35,7 @@ services:
     build:
       context: ./src/Frontend
       dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
       BACKEND_URL: "http://browser:5040"
       BROWSER_INTERNAL_TOKEN: "${BROWSER_INTERNAL_TOKEN:-}"
@@ -52,6 +56,7 @@ services:
     build:
       context: ./src/Services/Browser
       dockerfile: Dockerfile
+    restart: unless-stopped
     env_file:
       - ./src/Services/Browser/.env.local
     environment:
