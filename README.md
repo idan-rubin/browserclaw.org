@@ -7,7 +7,7 @@
 
 An AI agent for [browserclaw](https://github.com/idan-rubin/browserclaw) — a browser automation library that gives LLMs accessibility snapshots instead of screenshots.
 
-browserclaw is the engine. This project is one agent built on top of it. Bring your own agent, or use this one.
+browserclaw is the engine. This project is a production-grade agent built on top of it. Bring your own agent, or use this one.
 
 ## Quick start
 
@@ -43,6 +43,7 @@ import Anthropic from '@anthropic-ai/sdk';
 const client = new Anthropic();
 const browser = await BrowserClaw.launch({ headless: false });
 const page = await browser.open('https://news.ycombinator.com');
+const history = [];
 
 for (let step = 0; step < 20; step++) {
   const { snapshot } = await page.snapshot();
@@ -50,10 +51,11 @@ for (let step = 0; step < 20; step++) {
     model: 'claude-sonnet-4-20250514',
     max_tokens: 1024,
     system: 'You control a browser. Given a page snapshot, return JSON: { action, ref?, text?, url?, reasoning }. Actions: click, type, navigate, done.',
-    messages: [{ role: 'user', content: `Task: Find the top 3 AI posts.\n\nPage:\n${snapshot}` }],
+    messages: [...history, { role: 'user', content: `Task: Find the top 3 AI posts.\n\nPage:\n${snapshot}` }],
   });
 
   const action = JSON.parse(response.content[0].text);
+  history.push({ role: 'user', content: `Page:\n${snapshot}` }, { role: 'assistant', content: JSON.stringify(action) });
   if (action.action === 'done') break;
 
   switch (action.action) {
