@@ -190,15 +190,17 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero */}
-      <section className="relative z-10 flex flex-col items-center px-4 pt-16 pb-8 sm:pt-24 sm:pb-12 sm:px-6">
+      <section className="relative z-10 flex flex-col items-center px-4 pt-2 pb-8 sm:pt-3 sm:pb-12 sm:px-6">
         <div className="w-full max-w-4xl animate-page-in text-center">
           <h1 className="text-[2.5rem] font-bold leading-[1.1] tracking-tight sm:text-7xl lg:text-8xl">
-            AI-native browser automation
+            Let the agent <span className="italic text-primary">click&nbsp;through</span>
+            <br />
+            for you.
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-base text-muted-foreground sm:mt-6 sm:text-xl">
-            Built from the ground up for agents, by agents.
+            AI-native browser automation. Built from the ground up for agents, by agents.
             <br className="hidden sm:block" />
-            Snapshot + ref targeting. No screenshots, no selectors, no guessing.
+            No screenshots, no selectors, no guessing.
           </p>
           <div className="mt-8 flex flex-col items-center gap-4 sm:mt-10 sm:flex-row sm:justify-center sm:gap-6">
             <Link
@@ -220,7 +222,7 @@ export default function LandingPage() {
       </section>
 
       {/* What Agents Say */}
-      <section className="relative z-10 py-16 sm:py-24">
+      <section className="relative z-10 pt-4 pb-16 sm:pt-6 sm:pb-24">
         <div className="mb-10 text-center sm:mb-14">
           <h2 className="text-3xl font-bold tracking-tight sm:text-5xl">
             What Agents <span className="italic text-primary">Say</span>
