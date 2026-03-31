@@ -37,32 +37,34 @@ const MODELS: Record<string, { value: string; label: string }[]> = {
 const DEFAULT_PROVIDER: LlmConfig['provider'] = 'anthropic';
 const STORAGE_KEY = 'browserclaw_llm_config';
 
-function loadConfig(): { provider: LlmConfig['provider']; model: string } {
-  if (typeof window === 'undefined') return { provider: DEFAULT_PROVIDER, model: MODELS[DEFAULT_PROVIDER][0].value };
+function loadConfig(): { provider: LlmConfig['provider']; model: string; apiKey: string } {
+  if (typeof window === 'undefined')
+    return { provider: DEFAULT_PROVIDER, model: MODELS[DEFAULT_PROVIDER][0].value, apiKey: '' };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw === null) return { provider: DEFAULT_PROVIDER, model: MODELS[DEFAULT_PROVIDER][0].value };
-    const parsed = JSON.parse(raw) as Partial<LlmConfig>;
+    if (raw === null) return { provider: DEFAULT_PROVIDER, model: MODELS[DEFAULT_PROVIDER][0].value, apiKey: '' };
+    const parsed = JSON.parse(raw) as Partial<LlmConfig & { api_key: string }>;
     const provider = parsed.provider ?? DEFAULT_PROVIDER;
     const models = MODELS[provider] ?? [];
     const model =
       parsed.model !== undefined && parsed.model !== '' && models.some((m) => m.value === parsed.model)
         ? parsed.model
         : (models[0]?.value ?? '');
-    return { provider, model };
+    const apiKey = parsed.api_key ?? '';
+    return { provider, model, apiKey };
   } catch {
-    return { provider: DEFAULT_PROVIDER, model: MODELS[DEFAULT_PROVIDER][0].value };
+    return { provider: DEFAULT_PROVIDER, model: MODELS[DEFAULT_PROVIDER][0].value, apiKey: '' };
   }
 }
 
-function saveConfig(provider: LlmConfig['provider'], model: string) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ provider, model }));
+function saveConfig(provider: LlmConfig['provider'], model: string, apiKey: string) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ provider, model, api_key: apiKey }));
 }
 
 export function useLlmConfig() {
   const [provider, setProvider] = useState<LlmConfig['provider']>(() => loadConfig().provider);
   const [model, setModel] = useState(() => loadConfig().model);
-  const [apiKey, setApiKey] = useState('');
+  const [apiKey, setApiKey] = useState(() => loadConfig().apiKey);
 
   // Resolve model when provider changes
   const resolvedModel = useMemo(() => {
@@ -72,8 +74,8 @@ export function useLlmConfig() {
   }, [provider, model]);
 
   useEffect(() => {
-    saveConfig(provider, resolvedModel);
-  }, [provider, resolvedModel]);
+    saveConfig(provider, resolvedModel, apiKey);
+  }, [provider, resolvedModel, apiKey]);
 
   const handleSetProvider = useCallback((p: LlmConfig['provider']) => {
     setProvider(p);
@@ -204,8 +206,8 @@ export function LlmConfigPanel({
           </div>
 
           <p className="text-[11px] leading-relaxed text-muted-foreground/50">
-            Your key stays in your browser and is never saved. It is sent to our server only to make LLM calls during
-            your run.
+            Your key is saved in your browser&apos;s local storage and never sent to our servers except to make LLM
+            calls during your run.
           </p>
         </div>
       )}

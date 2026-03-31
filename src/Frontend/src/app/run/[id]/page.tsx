@@ -70,155 +70,170 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
 
   // SSE event stream
   useEffect(() => {
-    const eventSource = new EventSource(`/api/v1/runs/${id}/stream`);
     let terminated = false;
+    let es: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    const MAX_RECONNECTS = 10;
+    let reconnects = 0;
 
-    eventSource.addEventListener('plan', (e: MessageEvent) => {
-      const data = parseEventData(e);
-      if (!data) return;
-      setPlan({ prompt: String(data.prompt), plan: String(data.plan) });
-    });
+    function connect() {
+      es = new EventSource(`/api/v1/runs/${id}/stream`);
 
-    eventSource.addEventListener('thinking', (e: MessageEvent) => {
-      const data = parseEventData(e);
-      if (!data) return;
-      const sec = Math.floor((Date.now() - startTime.current) / 1000);
-      setEntries((prev) => [
-        ...prev,
-        { id: prev.length, type: 'thinking', message: String(data.message), elapsed: sec },
-      ]);
-    });
-
-    eventSource.addEventListener('step', (e: MessageEvent) => {
-      const data = parseEventData(e);
-      if (!data) return;
-      const sec = Math.floor((Date.now() - startTime.current) / 1000);
-      setEntries((prev) => [
-        ...prev,
-        {
-          id: prev.length,
-          type: 'step',
-          step: Number(data.step),
-          action: String(data.action),
-          reasoning: String(data.reasoning),
-          url: String(data.url),
-          page_title: String(data.page_title),
-          elapsed: sec,
-        },
-      ]);
-    });
-
-    eventSource.addEventListener('completed', (e: MessageEvent) => {
-      terminated = true;
-      const data = parseEventData(e);
-      if (!data) return;
-      if (typeof data.answer === 'string' && data.answer !== '') setAnswer(data.answer);
-      setSkillStats({
-        llm_calls: Number(data.llm_calls),
-        skills_used: Boolean(data.skills_used),
-        skill_outcome: String(data.skill_outcome),
+      es.addEventListener('plan', (e: MessageEvent) => {
+        const data = parseEventData(e);
+        if (!data) return;
+        setPlan({ prompt: String(data.prompt), plan: String(data.plan) });
       });
-      setStatus('completed');
-      eventSource.close();
-    });
 
-    eventSource.addEventListener('failed', (e: MessageEvent) => {
-      terminated = true;
-      const data = parseEventData(e);
-      if (!data) return;
-      setStatus('failed');
-      setError(String(data.error));
-      eventSource.close();
-    });
+      es.addEventListener('thinking', (e: MessageEvent) => {
+        const data = parseEventData(e);
+        if (!data) return;
+        const sec = Math.floor((Date.now() - startTime.current) / 1000);
+        setEntries((prev) => [
+          ...prev,
+          { id: prev.length, type: 'thinking', message: String(data.message), elapsed: sec },
+        ]);
+      });
 
-    eventSource.addEventListener('timeout', () => {
-      terminated = true;
-      setStatus('timeout');
-      setError('Session time limit reached (5 minutes)');
-      eventSource.close();
-    });
+      es.addEventListener('step', (e: MessageEvent) => {
+        const data = parseEventData(e);
+        if (!data) return;
+        const sec = Math.floor((Date.now() - startTime.current) / 1000);
+        setEntries((prev) => [
+          ...prev,
+          {
+            id: prev.length,
+            type: 'step',
+            step: Number(data.step),
+            action: String(data.action),
+            reasoning: String(data.reasoning),
+            url: String(data.url),
+            page_title: String(data.page_title),
+            elapsed: sec,
+          },
+        ]);
+      });
 
-    eventSource.addEventListener('skill_generated', (e: MessageEvent) => {
-      const data = parseEventData(e);
-      if (!data) return;
-      setSkill(data.skill as SkillOutput);
-    });
+      es.addEventListener('completed', (e: MessageEvent) => {
+        terminated = true;
+        const data = parseEventData(e);
+        if (!data) return;
+        if (typeof data.answer === 'string' && data.answer !== '') setAnswer(data.answer);
+        setSkillStats({
+          llm_calls: Number(data.llm_calls),
+          skills_used: Boolean(data.skills_used),
+          skill_outcome: String(data.skill_outcome),
+        });
+        setStatus('completed');
+        es?.close();
+      });
 
-    const addSkillEvent = (message: string) => {
-      const sec = Math.floor((Date.now() - startTime.current) / 1000);
-      setEntries((prev) => [...prev, { id: prev.length, type: 'skill_event', message, elapsed: sec }]);
-    };
+      es.addEventListener('failed', (e: MessageEvent) => {
+        terminated = true;
+        const data = parseEventData(e);
+        if (!data) return;
+        setStatus('failed');
+        setError(String(data.error));
+        es?.close();
+      });
 
-    eventSource.addEventListener('skills_loaded', (e: MessageEvent) => {
-      const data = parseEventData(e);
-      if (!data) return;
-      addSkillEvent(`Loaded skill "${String(data.title)}" for ${String(data.domain)}`);
-    });
+      es.addEventListener('timeout', () => {
+        terminated = true;
+        setStatus('timeout');
+        setError('Session time limit reached (5 minutes)');
+        es?.close();
+      });
 
-    eventSource.addEventListener('skill_improved', (e: MessageEvent) => {
-      const data = parseEventData(e);
-      if (!data) return;
-      addSkillEvent(`Skill improved: ${String(data.previous_steps)} → ${String(data.new_steps)} steps`);
-    });
+      es.addEventListener('skill_generated', (e: MessageEvent) => {
+        const data = parseEventData(e);
+        if (!data) return;
+        setSkill(data.skill as SkillOutput);
+      });
 
-    eventSource.addEventListener('skill_validated', (e: MessageEvent) => {
-      const data = parseEventData(e);
-      if (!data) return;
-      addSkillEvent(`Skill validated: "${String(data.title)}" (run #${String(data.run_count)})`);
-    });
+      const addSkillEvent = (message: string) => {
+        const sec = Math.floor((Date.now() - startTime.current) / 1000);
+        setEntries((prev) => [...prev, { id: prev.length, type: 'skill_event', message, elapsed: sec }]);
+      };
 
-    eventSource.addEventListener('skill_saved', (e: MessageEvent) => {
-      const data = parseEventData(e);
-      if (!data) return;
-      addSkillEvent(`New skill saved: "${String(data.title)}"`);
-    });
+      es.addEventListener('skills_loaded', (e: MessageEvent) => {
+        const data = parseEventData(e);
+        if (!data) return;
+        addSkillEvent(`Loaded skill "${String(data.title)}" for ${String(data.domain)}`);
+      });
 
-    eventSource.addEventListener('domain_skills', (e: MessageEvent) => {
-      const data = parseEventData(e);
-      if (!data) return;
-      if (Array.isArray(data.skills)) setDomainSkills(data.skills as DomainSkillEntry[]);
-    });
+      es.addEventListener('skill_improved', (e: MessageEvent) => {
+        const data = parseEventData(e);
+        if (!data) return;
+        addSkillEvent(`Skill improved: ${String(data.previous_steps)} → ${String(data.new_steps)} steps`);
+      });
 
-    eventSource.addEventListener('ask_user', (e: MessageEvent) => {
-      const data = parseEventData(e);
-      if (!data) return;
-      const sec = Math.floor((Date.now() - startTime.current) / 1000);
-      setPendingQuestion(String(data.question));
-      setStatus('waiting_for_user');
-      setEntries((prev) => [
-        ...prev,
-        { id: prev.length, type: 'ask_user', message: String(data.question), elapsed: sec },
-      ]);
-    });
+      es.addEventListener('skill_validated', (e: MessageEvent) => {
+        const data = parseEventData(e);
+        if (!data) return;
+        addSkillEvent(`Skill validated: "${String(data.title)}" (run #${String(data.run_count)})`);
+      });
 
-    eventSource.addEventListener('user_response', (e: MessageEvent) => {
-      const data = parseEventData(e);
-      if (!data) return;
-      const sec = Math.floor((Date.now() - startTime.current) / 1000);
-      setStatus('running');
-      setEntries((prev) => [
-        ...prev,
-        { id: prev.length, type: 'user_response', message: String(data.text), elapsed: sec },
-      ]);
-    });
+      es.addEventListener('skill_saved', (e: MessageEvent) => {
+        const data = parseEventData(e);
+        if (!data) return;
+        addSkillEvent(`New skill saved: "${String(data.title)}"`);
+      });
 
-    eventSource.onerror = () => {
-      if (terminated) {
-        eventSource.close();
-        return;
-      }
-      if (eventSource.readyState === EventSource.CLOSED) {
-        setTimeout(() => {
-          if (!terminated) {
-            setStatus('failed');
-            setError('Connection lost');
-          }
-        }, 3000);
-      }
-    };
+      es.addEventListener('domain_skills', (e: MessageEvent) => {
+        const data = parseEventData(e);
+        if (!data) return;
+        if (Array.isArray(data.skills)) setDomainSkills(data.skills as DomainSkillEntry[]);
+      });
+
+      es.addEventListener('ask_user', (e: MessageEvent) => {
+        const data = parseEventData(e);
+        if (!data) return;
+        const sec = Math.floor((Date.now() - startTime.current) / 1000);
+        setPendingQuestion(String(data.question));
+        setStatus('waiting_for_user');
+        setEntries((prev) => [
+          ...prev,
+          { id: prev.length, type: 'ask_user', message: String(data.question), elapsed: sec },
+        ]);
+      });
+
+      es.addEventListener('user_response', (e: MessageEvent) => {
+        const data = parseEventData(e);
+        if (!data) return;
+        const sec = Math.floor((Date.now() - startTime.current) / 1000);
+        setStatus('running');
+        setEntries((prev) => [
+          ...prev,
+          { id: prev.length, type: 'user_response', message: String(data.text), elapsed: sec },
+        ]);
+      });
+
+      es.addEventListener('connected', () => {
+        reconnects = 0;
+      });
+
+      es.onerror = () => {
+        if (terminated) {
+          es?.close();
+          return;
+        }
+        es?.close();
+        if (reconnects < MAX_RECONNECTS) {
+          reconnects++;
+          reconnectTimer = setTimeout(connect, 2000);
+        } else {
+          setStatus('failed');
+          setError('Connection lost');
+        }
+      };
+    }
+
+    connect();
 
     return () => {
-      eventSource.close();
+      terminated = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      es?.close();
     };
   }, [id]);
 

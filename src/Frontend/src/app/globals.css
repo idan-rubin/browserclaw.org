@@ -136,3 +136,46 @@
     background-image: radial-gradient(circle, oklch(1 0 0 / 0.03) 1px, transparent 1px);
   }
 }
+
+/* Marquee animations for testimonials */
+@keyframes marquee-left {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes marquee-right {
+  0% {
+    transform: translateX(-50%);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.marquee-track {
+  display: flex;
+  width: max-content;
+  gap: 1rem;
+}
+
+.marquee-left {
+  animation: marquee-left 60s linear infinite;
+}
+
+.marquee-right {
+  animation: marquee-right 60s linear infinite;
+}
+
+.marquee-container:hover .marquee-track {
+  animation-play-state: paused;
+}
+
+/* Fade edges */
+.marquee-mask {
+  mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+}
