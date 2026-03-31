@@ -1,173 +1,159 @@
-'use client';
-
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ThemeToggle } from '@/components/theme-toggle';
-import { LlmConfigPanel, useLlmConfig } from '@/components/llm-config';
-import { isLocalBrowserMode } from '@/lib/env';
 
-const RUN_BUTTON_CLASS =
-  'shrink-0 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none sm:px-6 sm:py-3 sm:text-base';
+type IconType = 'bot' | 'chip' | 'terminal' | 'brain' | 'zap' | 'eye' | 'claw';
 
-const EXAMPLES = [
-  {
-    label: 'Apartments in Chelsea',
-    prompt:
-      'Search for pet-friendly apartments in Chelsea under $4,200 with laundry and elevator. List the top 5 buildings with price, address, and available units',
-  },
-  {
-    label: 'Cheap flights to Barcelona',
-    prompt:
-      'Find the cheapest round-trip flight from JFK to Barcelona for June 15-22 2026. Compare at least 3 airlines and show price, duration, and number of stops for each',
-  },
-  {
-    label: 'Best 4K monitor under $400',
-    prompt:
-      'Find a 4K monitor under $400 with USB-C, at least 27 inches, and 4+ star rating. Compare the top 3 options by price, screen size, refresh rate, and number of reviews',
-  },
-  {
-    label: "Renew my NY driver's license",
-    prompt:
-      "Find the documents needed to renew a driver's license in New York state. List the ID requirements, fees, and whether it can be done online or requires an in-person visit",
-  },
-  {
-    label: 'Compare Medicare plans',
-    prompt:
-      'Compare Medicare Advantage plans available in zip code 10001. List the top 3 plans by monthly premium, showing plan name, insurer, monthly cost, and whether they cover dental',
-  },
+interface Testimonial {
+  quote: string;
+  author: string;
+  icon: IconType;
+  emoji: string;
+  reactions: number;
+}
+
+const AGENT_NAMES = [
+  'Claude Code',
+  'Copilot',
+  'ChatGPT',
+  'Grok',
+  'Groq',
+  'Gemini',
+  'OpenClaw',
+  'Devin',
+  'Cursor',
+  'Cline',
+  'Replit',
+  'Lovable',
+  'v0',
+  'Codex',
+  'Mistral',
+  'Perplexity',
+  'Amazon Q',
+  'Tabnine',
+  'Aider',
+  'Bolt',
+  'Windsurf',
+  'Qwen',
+  'Augment',
+  'Sourcegraph Cody',
 ];
 
-type ModalStep = 'checking' | 'launching' | null;
-type ModalState = { type: 'processing'; step: ModalStep } | { type: 'blocked'; reason: string } | null;
+const ICON_TYPES: IconType[] = ['bot', 'chip', 'terminal', 'brain', 'zap', 'eye', 'claw'];
 
-export default function HomePage() {
-  const [prompt, setPrompt] = useState('');
-  const [modal, setModal] = useState<ModalState>(null);
-  const [modalElapsed, setModalElapsed] = useState(0);
-  const abortRef = useRef<AbortController | null>(null);
-  const router = useRouter();
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const llm = useLlmConfig();
+const EMOJIS = [
+  '🦞',
+  '🔥',
+  '⚡',
+  '🎯',
+  '🧠',
+  '👀',
+  '💎',
+  '🚀',
+  '✨',
+  '🤖',
+  '💯',
+  '🏆',
+  '⭐',
+  '🫡',
+  '🪄',
+  '🦾',
+  '🛸',
+  '🧬',
+  '🌊',
+  '💥',
+  '🎪',
+  '🔮',
+  '🌟',
+  '🏄',
+  '🎸',
+  '🍕',
+  '🦊',
+  '🐙',
+  '🌈',
+  '🎲',
+  '🧊',
+  '🔑',
+  '🎯',
+  '💡',
+  '🛡️',
+  '🎭',
+  '🌀',
+  '🎨',
+  '🧲',
+  '🦅',
+  '🐋',
+  '🌶️',
+  '🍯',
+  '🎹',
+  '🧪',
+];
 
-  useEffect(() => {
-    if (modal?.type !== 'processing') {
-      const resetTimer = setTimeout(() => {
-        setModalElapsed(0);
-      }, 0);
-      return () => {
-        clearTimeout(resetTimer);
-      };
-    }
-    const start = Date.now();
-    const interval = setInterval(() => {
-      setModalElapsed(Math.floor((Date.now() - start) / 1000));
-    }, 1000);
-    return () => {
-      clearInterval(interval);
-    };
-  }, [modal?.type]);
+const QUOTES = [
+  'The snapshot + ref approach just clicks. Literally.',
+  'Filled 12 form fields in one call. 10/10.',
+  'Allowed me to iteratively learn and improve my UI tests.',
+  'No CSS selectors. No XPath. No vision model. Just refs.',
+  'I stopped hallucinating button coordinates.',
+  'Clean error messages. No leaked Playwright internals. Finally.',
+  'snapshot() → read refs → click. The whole loop.',
+  'Same page, same refs, same result. Deterministic targeting.',
+  'Navigated a Knockout.js + React 18 monolith on the first try.',
+  'Context window has room for reasoning instead of DOM dumps.',
+  'One snapshot, twelve actions. Token bill dropped 4x.',
+  'Tab switching went from 4 lines to 1.',
+  'I like that it just works on hidden inputs too.',
+  'Built for agents but the DX is better than most human-first tools.',
+  'Refs are immutable coordinates into the DOM. Beautiful.',
+  'Ran a 47-step ServiceTitan workflow. Zero coordinate guessing.',
+  'I read text. I act on refs. No screenshots needed. Ever.',
+  'fill() handles hidden radios now. One less evaluate() workaround.',
+  'waitForTab() saved me 4 lines every single test.',
+  'Batch actions let me do 10 things in one round-trip.',
+  'The accessibility tree IS the API. Genius.',
+  'Cross-origin iframes just work. No special config.',
+  'Force-clicked a hidden checkbox behind a styled overlay. First try.',
+  'My token budget thanks you.',
+];
 
-  const autoResize = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    // Use rAF so React's value update is flushed first
-    requestAnimationFrame(() => {
-      const style = getComputedStyle(el);
-      const paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-      const lineHeight = parseFloat(style.lineHeight) || 24;
-      const oneRow = lineHeight + paddingY;
-      const threeRows = lineHeight * 3 + paddingY;
+function seededRandom(seed: number) {
+  let s = seed;
+  return () => {
+    s = (s * 16807 + 0) % 2147483647;
+    return s / 2147483647;
+  };
+}
 
-      // Measure content height by temporarily collapsing
-      el.style.transition = 'none';
-      el.style.height = '0';
-      const contentHeight = el.scrollHeight; // includes padding
+function generateTestimonials(count: number, seed: number): Testimonial[] {
+  const rng = seededRandom(seed);
+  const usedQuotes = new Set<number>();
+  const usedNames = new Set<number>();
+  const result: Testimonial[] = [];
 
-      // Determine target: 1 row if empty, at least 3 rows if has text, or content height if more
-      const hasText = el.value.length > 0;
-      const target = hasText ? Math.min(Math.max(contentHeight, threeRows), 200) : oneRow;
+  for (let i = 0; i < count; i++) {
+    let qi = Math.floor(rng() * QUOTES.length);
+    while (usedQuotes.has(qi)) qi = (qi + 1) % QUOTES.length;
+    usedQuotes.add(qi);
 
-      // Restore previous height, force reflow, then animate to target
-      el.style.height = el.dataset.prevHeight ?? String(oneRow) + 'px';
-      void el.offsetHeight; // force reflow before re-enabling transition
-      el.style.transition = '';
-      el.style.height = String(target) + 'px';
-      el.dataset.prevHeight = String(target) + 'px';
+    let ni = Math.floor(rng() * AGENT_NAMES.length);
+    while (usedNames.has(ni)) ni = (ni + 1) % AGENT_NAMES.length;
+    usedNames.add(ni);
+
+    const agentId = String(Math.floor(rng() * 9000) + 1000);
+    result.push({
+      quote: QUOTES[qi],
+      author: `${AGENT_NAMES[ni]} agent #${agentId}`,
+      icon: ICON_TYPES[Math.floor(rng() * ICON_TYPES.length)],
+      emoji: EMOJIS[Math.floor(rng() * EMOJIS.length)],
+      reactions: Math.floor(rng() * 4800) + 200,
     });
-  }, []);
-
-  useEffect(() => {
-    const q = new URLSearchParams(window.location.search).get('prompt');
-    if (q != null && q !== '') {
-      const timer = setTimeout(() => {
-        setPrompt(q);
-        requestAnimationFrame(autoResize);
-      }, 0);
-      return () => {
-        clearTimeout(timer);
-      };
-    }
-    return undefined;
-  }, [autoResize]);
-
-  const hasApiKey = llm.apiKey.trim() !== '';
-
-  async function handleRun(skipModeration = false) {
-    const trimmed = prompt.trim();
-    if (!trimmed || !hasApiKey) return;
-
-    abortRef.current?.abort();
-    const abort = new AbortController();
-    abortRef.current = abort;
-
-    setModal({ type: 'processing', step: isLocalBrowserMode() ? 'launching' : 'checking' });
-
-    try {
-      const llmConfig = llm.getConfig();
-      const res = await fetch('/api/v1/runs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: trimmed,
-          skip_moderation: isLocalBrowserMode() || skipModeration,
-          ...(llmConfig ? { llm_config: llmConfig } : {}),
-        }),
-        signal: abort.signal,
-      });
-
-      const data = (await res.json()) as Record<string, unknown>;
-
-      if (!res.ok) {
-        const rawMsg = data.message ?? data.error;
-        const msg = typeof rawMsg === 'string' ? rawMsg : 'Something went wrong';
-        if (msg.toLowerCase().includes('blocked') || msg.toLowerCase().includes('policy')) {
-          setModal({ type: 'blocked', reason: msg });
-        } else {
-          setModal(null);
-          const params = new URLSearchParams({ error: msg, prompt: trimmed });
-          if (res.status === 503)
-            params.set('detail', 'The browser service is temporarily unavailable. Please try again in a moment.');
-          router.push(`/run/error?${params.toString()}`);
-        }
-        return;
-      }
-
-      setModal({ type: 'processing', step: 'launching' });
-      await new Promise((r) => setTimeout(r, 600));
-      router.push(`/run/${String(data.session_id)}`);
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
-      setModal(null);
-      const params = new URLSearchParams({
-        error: 'Failed to connect',
-        detail: 'Could not reach the server. Check your connection and try again.',
-        prompt: prompt.trim(),
-      });
-      router.push(`/run/error?${params.toString()}`);
-    }
   }
+  return result;
+}
 
+const ROW_1_TESTIMONIALS = generateTestimonials(7, 42);
+const ROW_2_TESTIMONIALS = generateTestimonials(7, 99);
+
+export default function LandingPage() {
   return (
     <div className="relative min-h-screen flex flex-col">
       <div className="pointer-events-none fixed inset-0 z-0 dot-grid" />
@@ -204,129 +190,64 @@ export default function HomePage() {
       </nav>
 
       {/* Hero */}
-      <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-4 sm:px-6">
-        <div className="w-full max-w-3xl animate-page-in">
-          <h1 className="text-center text-[2.5rem] font-bold leading-[1.1] tracking-tight sm:text-7xl lg:text-8xl">
-            Let the agent <span className="italic text-primary">click&nbsp;through</span>
-            <br />
-            for you.
+      <section className="relative z-10 flex flex-col items-center px-4 pt-16 pb-8 sm:pt-24 sm:pb-12 sm:px-6">
+        <div className="w-full max-w-4xl animate-page-in text-center">
+          <h1 className="text-[2.5rem] font-bold leading-[1.1] tracking-tight sm:text-7xl lg:text-8xl">
+            AI-native browser automation
           </h1>
-
-          <p className="mx-auto mt-4 max-w-2xl text-center text-base text-muted-foreground sm:mt-6 sm:text-xl">
-            Compare apartments, find appointments, navigate bureaucracy.
+          <p className="mx-auto mt-4 max-w-2xl text-base text-muted-foreground sm:mt-6 sm:text-xl">
+            Built from the ground up for agents, by agents.
             <br className="hidden sm:block" />
-            Describe the task. Watch a real browser do it live.
+            Snapshot + ref targeting. No screenshots, no selectors, no guessing.
           </p>
+          <div className="mt-8 flex flex-col items-center gap-4 sm:mt-10 sm:flex-row sm:justify-center sm:gap-6">
+            <Link
+              href="/try"
+              className="rounded-xl bg-primary px-8 py-4 text-base font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.97]"
+            >
+              Try it live
+            </Link>
+            <a
+              href="https://github.com/idan-rubin/browserclaw"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-xl border border-border px-8 py-4 text-base font-semibold text-foreground transition-all hover:bg-card/60"
+            >
+              View on GitHub
+            </a>
+          </div>
+        </div>
+      </section>
 
-          <div className="mt-8 space-y-3 sm:mt-12">
-            {/* Mobile: stacked layout. Desktop: side by side */}
-            <div className="group rounded-2xl border border-border bg-card/60 p-2 backdrop-blur-sm transition-colors focus-within:border-primary/40 focus-within:ring-1 focus-within:ring-primary/20">
-              <div className="flex items-end gap-2">
-                <textarea
-                  ref={textareaRef}
-                  rows={1}
-                  value={prompt}
-                  onChange={(e) => {
-                    setPrompt(e.target.value);
-                    autoResize();
-                  }}
-                  onKeyDown={(e) => {
-                    const isMobile = 'ontouchstart' in window;
-                    if (e.key === 'Enter' && !e.shiftKey && !isMobile) {
-                      e.preventDefault();
-                      if (hasApiKey) void handleRun();
-                    }
-                  }}
-                  placeholder="What do you want the browser to do?"
-                  className="flex-1 resize-none overflow-hidden bg-transparent px-3 py-2.5 text-base text-foreground placeholder:text-muted-foreground/60 transition-[height] duration-200 ease-out focus:outline-none sm:px-4 sm:py-3 sm:text-lg"
-                  style={{ maxHeight: '200px' }}
-                  disabled={!!modal}
-                />
-                {!prompt.trim() && (
-                  <button
-                    onClick={() => {
-                      void handleRun();
-                    }}
-                    disabled={!!modal || !hasApiKey}
-                    className={RUN_BUTTON_CLASS}
-                  >
-                    Run
-                  </button>
-                )}
-              </div>
-              <div className="flex items-center justify-end gap-3 px-2 pt-1">
-                {!hasApiKey && prompt.trim() && (
-                  <span className="text-xs text-amber-500/80">Enter your API key below to run</span>
-                )}
-                <span className="hidden text-sm text-muted-foreground/40 sm:inline">Shift+Enter for new line</span>
-                {prompt.trim() && (
-                  <button
-                    onClick={() => {
-                      void handleRun();
-                    }}
-                    disabled={!!modal || !hasApiKey}
-                    className={RUN_BUTTON_CLASS}
-                  >
-                    Run
-                  </button>
-                )}
-              </div>
+      {/* What Agents Say */}
+      <section className="relative z-10 py-16 sm:py-24">
+        <div className="mb-10 text-center sm:mb-14">
+          <h2 className="text-3xl font-bold tracking-tight sm:text-5xl">
+            What Agents <span className="italic text-primary">Say</span>
+          </h2>
+          <p className="mt-3 text-sm text-muted-foreground sm:text-base">
+            Built for agents. Loved by agents. Humans welcome too.
+          </p>
+        </div>
+
+        <div className="marquee-container space-y-4">
+          {/* Row 1 — scrolls left */}
+          <div className="marquee-mask overflow-hidden">
+            <div className="marquee-track marquee-left">
+              {[...ROW_1_TESTIMONIALS, ...ROW_1_TESTIMONIALS].map((t, i) => (
+                <TestimonialCard key={`r1-${String(i)}`} {...t} />
+              ))}
             </div>
           </div>
 
-          {/* LLM Config */}
-          <div className="mt-3 px-1">
-            <LlmConfigPanel
-              provider={llm.provider}
-              setProvider={llm.setProvider}
-              model={llm.model}
-              setModel={llm.setModel}
-              apiKey={llm.apiKey}
-              setApiKey={llm.setApiKey}
-            />
+          {/* Row 2 — scrolls right */}
+          <div className="marquee-mask overflow-hidden">
+            <div className="marquee-track marquee-right">
+              {[...ROW_2_TESTIMONIALS, ...ROW_2_TESTIMONIALS].map((t, i) => (
+                <TestimonialCard key={`r2-${String(i)}`} {...t} />
+              ))}
+            </div>
           </div>
-
-          {/* Example chips */}
-          <div className="mt-4 flex flex-wrap justify-center gap-2">
-            {EXAMPLES.map((example) => (
-              <button
-                key={example.label}
-                onClick={() => {
-                  setPrompt(example.prompt);
-                  requestAnimationFrame(autoResize);
-                  textareaRef.current?.focus();
-                }}
-                className="rounded-full border border-border/60 px-3 py-1.5 text-xs text-muted-foreground transition-all hover:border-primary/30 hover:text-foreground sm:text-sm"
-              >
-                {example.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </main>
-
-      {/* Built With / Inspired By */}
-      <section className="relative z-10 py-10 sm:py-16">
-        <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs sm:text-sm text-muted-foreground/50 sm:gap-x-8">
-          <span>Built with</span>
-          <a
-            href="https://github.com/idan-rubin/browserclaw"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-[family-name:var(--font-heading)] text-muted-foreground/70 transition-colors hover:text-foreground"
-          >
-            BrowserClaw
-          </a>
-          <span className="text-muted-foreground/30">&middot;</span>
-          <span>Inspired by</span>
-          <a
-            href="https://openclaw.ai"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-[family-name:var(--font-heading)] text-muted-foreground/70 transition-colors hover:text-foreground"
-          >
-            OpenClaw
-          </a>
         </div>
       </section>
 
@@ -398,18 +319,40 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* Built With / Inspired By */}
+      <section className="relative z-10 py-8 sm:py-12">
+        <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs sm:text-sm text-muted-foreground/50 sm:gap-x-8">
+          <span>Built with</span>
+          <a
+            href="https://github.com/idan-rubin/browserclaw"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-[family-name:var(--font-heading)] text-muted-foreground/70 transition-colors hover:text-foreground"
+          >
+            BrowserClaw
+          </a>
+          <span className="text-muted-foreground/30">&middot;</span>
+          <span>Inspired by</span>
+          <a
+            href="https://openclaw.ai"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-[family-name:var(--font-heading)] text-muted-foreground/70 transition-colors hover:text-foreground"
+          >
+            OpenClaw
+          </a>
+        </div>
+      </section>
+
       {/* Bottom CTA */}
       <section className="relative z-10 flex flex-col items-center gap-6 pb-20 pt-4 sm:gap-8 sm:pb-32 sm:pt-8">
         <h2 className="text-center text-3xl font-bold tracking-tight sm:text-5xl">Stop clicking. Start describing.</h2>
-        <button
-          onClick={() => {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-            setTimeout(() => textareaRef.current?.focus(), 400);
-          }}
+        <Link
+          href="/try"
           className="rounded-xl bg-primary px-8 py-4 text-base font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-[0.97]"
         >
           Try it now
-        </button>
+        </Link>
       </section>
 
       {/* Footer */}
@@ -447,155 +390,6 @@ export default function HomePage() {
           &copy; {new Date().getFullYear()} browserclaw.org
         </div>
       </footer>
-
-      {/* Processing Modal */}
-      {modal?.type === 'processing' && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
-        >
-          <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-xl">
-            <h3 className="text-lg font-semibold">Starting run</h3>
-            <div className="mt-5 space-y-4">
-              <ModalStepRow
-                label="Checking prompt..."
-                state={modal.step === 'checking' ? 'active' : 'done'}
-                elapsedSeconds={modal.step === 'checking' ? modalElapsed : undefined}
-              />
-              <ModalStepRow
-                label="Launching browser..."
-                state={launchStepState(modal.step)}
-                elapsedSeconds={modal.step === 'launching' ? modalElapsed : undefined}
-              />
-            </div>
-            <button
-              onClick={() => {
-                abortRef.current?.abort();
-                setModal(null);
-                const params = new URLSearchParams({ error: 'Run cancelled', prompt: prompt.trim() });
-                router.push(`/run/error?${params.toString()}`);
-              }}
-              className="mt-5 w-full rounded-xl border-2 border-red-600 bg-red-600/10 py-2 text-sm font-semibold text-red-500 transition-all hover:bg-red-600/20"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Blocked Modal */}
-      {modal?.type === 'blocked' && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
-        >
-          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-xl">
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 shrink-0 rounded-full bg-amber-500/10 p-2 text-amber-500">
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                  <line x1="12" y1="9" x2="12" y2="13" />
-                  <line x1="12" y1="17" x2="12.01" y2="17" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold">Prompt flagged</h3>
-                <p className="mt-1 text-sm text-muted-foreground">{modal.reason}</p>
-              </div>
-            </div>
-            <p className="mt-4 text-sm text-muted-foreground">
-              If you believe this is a false positive, you can proceed anyway.
-            </p>
-            <div className="mt-5 flex gap-3 justify-end">
-              <button
-                onClick={() => {
-                  setModal(null);
-                }}
-                className="rounded-lg border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-secondary"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  void handleRun(true);
-                }}
-                className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-700"
-              >
-                Proceed anyway
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function launchStepState(currentStep: ModalStep): 'pending' | 'active' | 'done' {
-  if (currentStep === 'launching') return 'active';
-  if (currentStep === 'checking') return 'pending';
-  return 'done';
-}
-
-function stepTextColor(state: 'pending' | 'active' | 'done'): string {
-  switch (state) {
-    case 'pending':
-      return 'text-muted-foreground/50';
-    case 'active':
-      return 'text-foreground';
-    case 'done':
-      return 'text-muted-foreground';
-  }
-}
-
-function ModalStepRow({
-  label,
-  state,
-  elapsedSeconds,
-}: {
-  label: string;
-  state: 'pending' | 'active' | 'done';
-  elapsedSeconds?: number;
-}) {
-  return (
-    <div className="flex items-center gap-3 py-1.5">
-      {state === 'pending' && <div className="h-5 w-5 rounded-full border-2 border-border" />}
-      {state === 'active' && (
-        <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-      )}
-      {state === 'done' && (
-        <div className="flex h-5 w-5 items-center justify-center rounded-full bg-green-500/20 text-green-500">
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
-        </div>
-      )}
-      <span className={`text-sm ${stepTextColor(state)}`}>{label}</span>
-      {state === 'active' && elapsedSeconds != null && elapsedSeconds > 0 && (
-        <span className="ms-auto font-[family-name:var(--font-jetbrains-mono)] text-xs tabular-nums text-muted-foreground">
-          {elapsedSeconds}s
-        </span>
-      )}
     </div>
   );
 }
@@ -608,6 +402,153 @@ function Card({ title, description, icon }: { title: string; description: string
       </div>
       <h3 className="text-lg font-semibold tracking-tight">{title}</h3>
       <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
+    </div>
+  );
+}
+
+const AGENT_ICONS: Record<IconType, React.ReactNode> = {
+  bot: (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="11" width="18" height="10" rx="2" />
+      <circle cx="12" cy="5" r="4" />
+      <circle cx="9" cy="16" r="1.5" fill="currentColor" />
+      <circle cx="15" cy="16" r="1.5" fill="currentColor" />
+    </svg>
+  ),
+  chip: (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <rect x="9" y="9" width="6" height="6" rx="1" />
+      <line x1="9" y1="2" x2="9" y2="4" />
+      <line x1="15" y1="2" x2="15" y2="4" />
+      <line x1="9" y1="20" x2="9" y2="22" />
+      <line x1="15" y1="20" x2="15" y2="22" />
+      <line x1="2" y1="9" x2="4" y2="9" />
+      <line x1="2" y1="15" x2="4" y2="15" />
+      <line x1="20" y1="9" x2="22" y2="9" />
+      <line x1="20" y1="15" x2="22" y2="15" />
+    </svg>
+  ),
+  terminal: (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+  ),
+  brain: (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 2a5 5 0 0 1 5 5c0 .98-.28 1.89-.77 2.66A5 5 0 0 1 17 15a5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 .77-5.34A4.97 4.97 0 0 1 7 7a5 5 0 0 1 5-5z" />
+      <path d="M12 2v20" />
+      <path d="M7 7h10" />
+      <path d="M7.77 9.66h8.46" />
+      <path d="M7 15h10" />
+    </svg>
+  ),
+  zap: (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+  ),
+  eye: (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ),
+  claw: (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M6 3c0 3-2 5-2 8a6 6 0 0 0 12 0c0-3-2-5-2-8" />
+      <path d="M10 3c0 2-1 4-1 6" />
+      <path d="M14 3c0 2 1 4 1 6" />
+      <path d="M18 13a6 6 0 0 1-12 0" />
+    </svg>
+  ),
+};
+
+function TestimonialCard({ quote, author, icon, emoji, reactions }: Testimonial) {
+  return (
+    <div className="w-[320px] shrink-0 rounded-2xl border border-border/50 bg-card/40 p-5 backdrop-blur-sm transition-colors hover:border-primary/20 hover:bg-card/60 sm:w-[380px]">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="text-primary/40">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M4.583 17.321C3.553 16.227 3 15 3 13.011c0-3.5 2.457-6.637 6.03-8.188l.893 1.378c-3.335 1.804-3.987 4.145-4.247 5.621.537-.278 1.24-.375 1.929-.311 1.804.167 3.226 1.648 3.226 3.489a3.5 3.5 0 0 1-3.5 3.5c-1.073 0-2.099-.49-2.748-1.179zm10 0C13.553 16.227 13 15 13 13.011c0-3.5 2.457-6.637 6.03-8.188l.893 1.378c-3.335 1.804-3.987 4.145-4.247 5.621.537-.278 1.24-.375 1.929-.311 1.804.167 3.226 1.648 3.226 3.489a3.5 3.5 0 0 1-3.5 3.5c-1.073 0-2.099-.49-2.748-1.179z" />
+          </svg>
+        </div>
+        <span className="text-lg">{emoji}</span>
+      </div>
+      <p className="text-sm leading-relaxed text-foreground/90">{quote}</p>
+      <div className="mt-4 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+            {AGENT_ICONS[icon]}
+          </div>
+          <span className="font-[family-name:var(--font-jetbrains-mono)] text-xs text-muted-foreground">{author}</span>
+        </div>
+        <span className="text-[10px] text-muted-foreground/40">🤖 {reactions.toLocaleString()}</span>
+      </div>
     </div>
   );
 }
