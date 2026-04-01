@@ -52,7 +52,7 @@ export default function LandingPage() {
           <p className="mx-auto mt-4 max-w-2xl text-base text-muted-foreground sm:mt-6 sm:text-xl">
             AI-native browser automation. Built from the ground up for agents, by agents.
             <br className="hidden sm:block" />
-            {' '}No screenshots, no selectors, no guessing.
+            No screenshots, no selectors, no guessing.
           </p>
           <div className="mt-8 flex flex-row items-center justify-center gap-3 sm:mt-10 sm:gap-6">
             <Link
