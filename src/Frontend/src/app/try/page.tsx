@@ -176,7 +176,7 @@ export default function TryPage() {
         <div className="flex items-center gap-2 sm:gap-8">
           <div className="hidden sm:flex items-center gap-6 text-sm text-muted-foreground">
             <a
-              href="https://github.com/idan-rubin/browserclaw.agent"
+              href="https://github.com/idan-rubin/browserclaw-agent"
               target="_blank"
               rel="noopener noreferrer"
               className="transition-colors hover:text-foreground"

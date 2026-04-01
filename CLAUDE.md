@@ -1,8 +1,8 @@
-# browserclaw.agent — Project Instructions
+# browserclaw-agent — Project Instructions
 
 ## What This Project Is
 
-browserclaw.agent is the AI agent that drives browserclaw. It reads accessibility snapshots, decides what to do, and learns skills to handle real-world web complexity.
+browserclaw-agent is the AI agent that drives browserclaw. It reads accessibility snapshots, decides what to do, and learns skills to handle real-world web complexity.
 
 ```
 Input:  prompt
@@ -39,7 +39,7 @@ Output: live browser stream → skill file OR error message
 ## Project Structure
 
 ```
-browserclaw.agent/
+browserclaw-agent/
 ├── src/
 │   ├── Frontend/                # Next.js (React + TypeScript)
 │   │   ├── src/
@@ -122,11 +122,19 @@ for (let step = 0; step < MAX_STEPS; step++) {
   emitSSE({ step, action: action.action, reasoning: action.reasoning });
 
   switch (action.action) {
-    case 'click':    await page.click(action.ref); break;
-    case 'type':     await page.type(action.ref, action.text); break;
-    case 'navigate': await page.goto(action.url); break;
-    case 'done':     return { success: true, history };
-    case 'fail':     return { success: false, error: action.reasoning };
+    case "click":
+      await page.click(action.ref);
+      break;
+    case "type":
+      await page.type(action.ref, action.text);
+      break;
+    case "navigate":
+      await page.goto(action.url);
+      break;
+    case "done":
+      return { success: true, history };
+    case "fail":
+      return { success: false, error: action.reasoning };
   }
   history.push(action);
 }
@@ -135,6 +143,7 @@ for (let step = 0; step < MAX_STEPS; step++) {
 ## VNC Stack (in Browser Service container)
 
 Same as beelz.ai:
+
 - **Xvfb** — virtual framebuffer (:99, 1920x1080x24)
 - **fluxbox** — window manager
 - **x11vnc** — VNC server (port 5900)
@@ -146,6 +155,7 @@ Frontend embeds: `/vnc/vnc.html?autoconnect=true&resize=scale&view_only=true`
 ## Rate Limiting
 
 No paywall for MVP. Rate limit by user:
+
 - 5 runs per user per 24 hours
 - Max 1 concurrent run per user
 - Global max concurrent sessions (based on infra capacity)

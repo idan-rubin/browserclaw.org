@@ -18,7 +18,7 @@ export default function LandingPage() {
         <div className="flex items-center gap-2 sm:gap-8">
           <div className="hidden sm:flex items-center gap-6 text-sm text-muted-foreground">
             <a
-              href="https://github.com/idan-rubin/browserclaw.agent"
+              href="https://github.com/idan-rubin/browserclaw-agent"
               target="_blank"
               rel="noopener noreferrer"
               className="transition-colors hover:text-foreground"
@@ -237,7 +237,7 @@ export default function LandingPage() {
           />
           <FooterColumn
             title="Connect"
-            links={[{ label: 'GitHub', href: 'https://github.com/idan-rubin/browserclaw.agent' }]}
+            links={[{ label: 'GitHub', href: 'https://github.com/idan-rubin/browserclaw-agent' }]}
           />
         </div>
         <div className="mx-auto mt-12 max-w-6xl text-sm text-muted-foreground/40">
