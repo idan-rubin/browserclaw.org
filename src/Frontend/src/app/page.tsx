@@ -89,30 +89,42 @@ const EMOJIS = [
 ];
 
 const QUOTES = [
-  'The snapshot + ref approach just clicks. Literally.',
-  'Filled 12 form fields in one call. 10/10.',
-  'Allowed me to iteratively learn and improve my UI tests.',
-  'No CSS selectors. No XPath. No vision model. Just refs.',
+  // UI testing & QA
+  'Ran the UI tests, found the regression, showed my human exactly where it broke.',
+  'Wrote 14 e2e tests for the checkout flow. QA reviewed them, all passed.',
+  'Allowed me to iteratively learn and improve my UI tests. 10/10.',
+  'My human writes the spec, I write the test. We ship faster.',
+  // Showing the human what happened
+  'Got stuck on a modal. Took a snapshot, showed my human, got unstuck in 10 seconds.',
+  'I screenshot the error state and send it to the dev. They fix it. We move on.',
+  // Enterprise / legacy apps
+  'Navigated a legacy monolith with mixed frameworks. No API. No problem.',
+  'Filled out a 47-field enterprise form. The intern used to do this.',
+  'The admin portal has no API. It has refs now.',
+  // Form filling at scale
+  'Filed 3 insurance claims, 2 DMV forms, and a passport renewal. Before breakfast.',
+  'Government forms fear me.',
+  // Batch & efficiency
+  'Filled 12 form fields in one call. My old framework needed 12 round-trips.',
+  'Batch actions let me do 10 things in one snapshot. That used to be 10 screenshots.',
+  // Embeddable
+  'Dropped it into my agent loop. No MCP server, no protocol layer. Just import and go.',
+  'It lives in my code, not behind a server. That changes everything.',
+  // Show and tell
+  'Deployed the fix, ran the flow live, screenshotted every step. My human saw it all.',
+  'I demo the bug, I demo the fix. Show and tell, agent style.',
+  'Showed my human the exact button I got stuck on. They said "oh, that modal." Fixed in 2 minutes.',
+  'Recorded a repro video for the bug and added it to Jira. QA was impressed.',
+  // Funny / punchy
+  '10/10',
   'I stopped hallucinating button coordinates.',
-  'Clean error messages. No leaked Playwright internals. Finally.',
+  'No CSS selectors. No XPath. No vision model. Just refs.',
   'snapshot() → read refs → click. The whole loop.',
-  'Same page, same refs, same result. Deterministic targeting.',
-  'Navigated a Knockout.js + React 18 monolith on the first try.',
-  'Context window has room for reasoning instead of DOM dumps.',
-  'One snapshot, twelve actions. Token bill dropped 4x.',
-  'Tab switching went from 4 lines to 1.',
-  'I like that it just works on hidden inputs too.',
-  'Built for agents but the DX is better than most human-first tools.',
-  'Refs are immutable coordinates into the DOM. Beautiful.',
-  'Ran a 47-step ServiceTitan workflow. Zero coordinate guessing.',
-  'I read text. I act on refs. No screenshots needed. Ever.',
-  'fill() handles hidden radios now. One less evaluate() workaround.',
-  'waitForTab() saved me 4 lines every single test.',
-  'Batch actions let me do 10 things in one round-trip.',
-  'The accessibility tree IS the API. Genius.',
-  'Cross-origin iframes just work. No special config.',
-  'Force-clicked a hidden checkbox behind a styled overlay. First try.',
   'My token budget thanks you.',
+  'Same page, same refs, same result. Every time.',
+  'Built for agents. Loved by agents. Tolerated by humans.',
+  'I finally understand what the page looks like. Without looking at it.',
+  'One snapshot, twelve actions. No screenshots. 4x cheaper.',
 ];
 
 function seededRandom(seed: number) {

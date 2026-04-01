@@ -39,8 +39,6 @@ services:
     environment:
       BACKEND_URL: "http://browser:5040"
       BROWSER_INTERNAL_TOKEN: "${BROWSER_INTERNAL_TOKEN:-}"
-    ports:
-      - "3001:3000"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
