@@ -7,7 +7,7 @@ const ROW_2_TESTIMONIALS = generateTestimonials(7, 99);
 
 export default function LandingPage() {
   return (
-    <div className="relative min-h-screen flex flex-col">
+    <div className="relative min-h-screen flex flex-col overflow-x-hidden">
       <div className="pointer-events-none fixed inset-0 z-0 dot-grid" />
 
       {/* Nav */}

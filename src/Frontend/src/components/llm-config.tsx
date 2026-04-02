@@ -92,7 +92,7 @@ export function useLlmConfig() {
 }
 
 const SELECT_CLASS =
-  'h-9 rounded-lg border border-border bg-background px-3 text-sm text-foreground transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20';
+  'h-9 appearance-none rounded-lg border border-border bg-background px-3 text-sm text-foreground transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20';
 
 export function LlmConfigPanel({
   provider,
