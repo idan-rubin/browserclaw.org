@@ -733,7 +733,7 @@ Respond with JSON: {"plan": "your revised plan here"}`,
         // LLM responded but not with valid JSON — burn a step, the call was made
         consecutiveParseFailures++;
         logger.warn(
-          { step, attempt: consecutiveParseFailures, maxAttempts: MAX_PARSE_FAILURES, snippet: err.responseSnippet },
+          { step, attempt: consecutiveParseFailures, maxAttempts: MAX_PARSE_FAILURES, parseError: err.message },
           'LLM returned non-JSON response',
         );
         emit('step_error', { step, error: `LLM response was not valid JSON: ${err.message}`, type: 'parse_error' });
@@ -753,12 +753,12 @@ Respond with JSON: {"plan": "your revised plan here"}`,
 
       // API/network error — don't burn a step, the agent never got to act
       consecutiveApiFailures++;
-      const message = sanitizeErrorText(err instanceof Error ? err.message : 'LLM API call failed');
+      const apiError = sanitizeErrorText(err instanceof Error ? err.message : 'LLM API call failed');
       logger.error(
-        { step, attempt: consecutiveApiFailures, maxAttempts: MAX_API_FAILURES, error: message },
-        'LLM API error',
+        { step, attempt: consecutiveApiFailures, maxAttempts: MAX_API_FAILURES },
+        `LLM API error: ${apiError}`,
       );
-      emit('step_error', { step, error: `AI service error: ${message}`, type: 'api_error' });
+      emit('step_error', { step, error: `AI service error: ${apiError}`, type: 'api_error' });
       if (consecutiveApiFailures >= MAX_API_FAILURES) {
         return {
           success: false,
