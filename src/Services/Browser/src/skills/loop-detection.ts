@@ -27,7 +27,7 @@ export function detectLoop(action: { action: string; ref?: string }, history: Ag
     return {
       level: 'urgent',
       message:
-        'STUCK: You have repeated this exact action 12+ times. This approach is not working. You MUST try something completely different — a different element, a different page, or a different strategy entirely.',
+        'STUCK: You have repeated this exact action 12+ times. This approach is not working. You MUST try something completely different. If a popup, date picker, or overlay is blocking the UI, use "keyboard" with "Escape" to close it. Otherwise try a different element, a different page, or a different strategy entirely.',
     };
   }
 
@@ -35,7 +35,7 @@ export function detectLoop(action: { action: string; ref?: string }, history: Ag
     return {
       level: 'warning',
       message:
-        'You have repeated this action 8+ times. Consider whether this approach is making progress. If not, try a different path — use site navigation, search, or a different element.',
+        'You have repeated this action 8+ times. Consider whether this approach is making progress. If not, try pressing Escape to dismiss any blocking popups or overlays, then try a different path — use site navigation, search, or a different element.',
     };
   }
 
@@ -43,7 +43,7 @@ export function detectLoop(action: { action: string; ref?: string }, history: Ag
     return {
       level: 'gentle',
       message:
-        'You have repeated this action several times. If you are making progress with each repetition, keep going. If not, a different approach might get you there faster.',
+        'You have repeated this action several times. If you are making progress with each repetition, keep going. If not, try a different approach: use "keyboard" with "Escape" to close any blocking popups, date pickers, or overlays, then try a different element or strategy.',
     };
   }
 

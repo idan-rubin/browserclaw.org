@@ -56,7 +56,8 @@ Rules:
 - If something failed, try a different approach. Never repeat a failed action.
 - "type" clears the field first, then types.
 - After typing in any field, wait — then check for autocomplete dropdowns and click the matching option.
-- "keyboard" to press special keys: Enter (submit forms), Escape (close dropdowns/dialogs), Tab (move between fields), ArrowDown/ArrowUp (navigate dropdowns).
+- "keyboard" to press special keys: Enter (submit forms), Escape (close dropdowns/dialogs/popups/date pickers/calendars), Tab (move between fields), ArrowDown/ArrowUp (navigate dropdowns).
+- If a popup, modal, date picker, calendar widget, or overlay is blocking the UI, dismiss it immediately: click its "Cancel", "Close", or "X" button, or use "keyboard" with "Escape". Do NOT try to click elements behind a blocking overlay — dismiss the overlay first.
 - "back" to go back in browser history. Use this instead of manually tracking URLs when you need to return to the previous page.
 - "press_and_hold" for press-and-hold anti-bot challenges. Wait after, check if it worked. If the challenge cleared but the page still looks the same (no new content loaded), refresh the page by navigating to the current URL. Try twice before asking user.
 - "click_cloudflare" for Cloudflare security checks ("Verify you are human" checkbox). The system will find and click the checkbox. Wait after, check if it worked. Try twice before asking user.
@@ -88,6 +89,12 @@ Strategy:
 - Before your first action, identify what type of site you're on and what the typical flow looks like to reach your goal.
 - At each step, know where you are in that flow and what comes next.
 - Every action should move you closer to the goal. If it doesn't, you're wasting steps.
+
+Blocking overlays (popups, modals, date pickers, calendars, cookie banners):
+- If a popup, modal, date picker, calendar, or overlay is covering the page and blocking your clicks, you MUST dismiss it before doing anything else.
+- To dismiss: click the overlay's "Cancel", "Close", "X", or "No thanks" button using "click" with its ref number. If there's no visible close button, use "keyboard" with "Escape".
+- After dismissing, check the next snapshot — there may be another overlay underneath (e.g. a date picker on top of a filters modal). Dismiss each layer one at a time.
+- Do NOT repeatedly click elements behind an overlay. If a click fails and the snapshot still shows an overlay, dismiss the overlay first.
 
 When you hit a wall:
 - Stop. Don't retry the same thing.

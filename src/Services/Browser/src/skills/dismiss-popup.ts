@@ -91,10 +91,25 @@ export async function dismissPopup(page: CrawlPage): Promise<boolean> {
     `)) as boolean;
 
     if (dismissed) {
-      logger.info('dismiss-popup: closed a popup');
+      logger.info('dismiss-popup: closed a popup via click');
       await page.waitFor({ timeMs: 500 });
+      return true;
     }
-    return dismissed;
+
+    // Fallback: press Escape to dismiss popups/date pickers/overlays that have no close button
+    logger.info('dismiss-popup: no close button found, trying Escape key');
+    await page.press('Escape');
+    await page.waitFor({ timeMs: 500 });
+
+    // Check if the popup was dismissed
+    const stillOpen = await detectPopup(page);
+    if (!stillOpen) {
+      logger.info('dismiss-popup: closed popup via Escape key');
+      return true;
+    }
+
+    logger.info('dismiss-popup: Escape did not close the popup');
+    return false;
   } catch (err) {
     logger.error({ err }, 'dismiss-popup failed');
     return false;
