@@ -520,7 +520,7 @@ Respond with JSON: {"plan": "your plan here"}`,
       return {
         success: false,
         steps: history,
-        error: 'Session timed out',
+        error: 'Session aborted',
         duration_ms: Date.now() - startTime,
       };
     }

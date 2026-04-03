@@ -185,7 +185,7 @@ describe('runAgentLoop', () => {
     const result: AgentLoopResult = await runAgentLoop('Do something', page, emit, controller.signal);
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe('Session timed out');
+    expect(result.error).toBe('Session aborted');
   });
 
   it('fails after max consecutive parse failures', async () => {

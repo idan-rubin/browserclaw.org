@@ -4,7 +4,6 @@ export interface Session {
   created_at: string;
   last_activity_at: string;
   status: SessionStatus;
-  max_duration_ms?: number;
 }
 
 export type SessionStatus = 'pending' | 'running' | 'waiting_for_user' | 'completed' | 'failed';

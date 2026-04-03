@@ -10,7 +10,6 @@ import { RunSummary } from '@/components/run/run-summary';
 import { RunConsole } from '@/components/run/run-console';
 import type { ConsoleEntry, SkillOutput, DomainSkillEntry, RunStatus } from '@/components/run/types';
 
-const SESSION_DURATION_MS = 5 * 60 * 1000;
 const VNC_BASE = process.env.NEXT_PUBLIC_VNC_URL ?? '/vnc';
 const vncUrl = `${VNC_BASE}/vnc.html?autoconnect=true&resize=scale&view_only=true${VNC_BASE === '/vnc' ? '&path=vnc/websockify' : ''}`;
 
@@ -62,11 +61,8 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
     };
   }, [done]);
 
-  const remaining = Math.max(0, SESSION_DURATION_MS - elapsed);
-  const minutes = Math.floor(remaining / 60000);
-  const seconds = Math.floor((remaining % 60000) / 1000);
-  const progress = Math.min(100, (elapsed / SESSION_DURATION_MS) * 100);
-  const isLow = remaining < 60000;
+  const minutes = Math.floor(elapsed / 60000);
+  const seconds = Math.floor((elapsed % 60000) / 1000);
 
   // SSE event stream
   useEffect(() => {
@@ -323,25 +319,9 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
           >
             Cancel
           </button>
-          {!isLocalBrowserMode() && (
-            <div className="flex items-center gap-2.5">
-              <div className="relative hidden h-1.5 w-28 overflow-hidden rounded-full bg-secondary/60 sm:block">
-                <div
-                  className={`absolute inset-y-0 left-0 rounded-full transition-all duration-1000 ${
-                    isLow ? 'bg-red-500' : 'bg-primary'
-                  }`}
-                  style={{ width: `${String(100 - progress)}%` }}
-                />
-              </div>
-              <span
-                className={`font-[family-name:var(--font-jetbrains-mono)] text-sm tabular-nums ${
-                  isLow ? 'text-red-400' : 'text-muted-foreground'
-                }`}
-              >
-                {minutes}:{seconds.toString().padStart(2, '0')}
-              </span>
-            </div>
-          )}
+          <span className="font-[family-name:var(--font-jetbrains-mono)] text-sm tabular-nums text-muted-foreground">
+            {minutes}:{seconds.toString().padStart(2, '0')}
+          </span>
         </div>
       </nav>
 
