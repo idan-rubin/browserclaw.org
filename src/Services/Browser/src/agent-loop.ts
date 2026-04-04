@@ -578,44 +578,47 @@ Respond with JSON: {"plan": "your plan here"}`,
     emit('thinking', { step, message: `Analyzing page: ${title}` });
 
     // --- Re-planning checkpoint ---
-    // Every REPLAN_CHECK_INTERVAL steps, if we've had failures, generate a fresh plan
-    if (
-      step > 0 &&
-      step % REPLAN_CHECK_INTERVAL === 0 &&
-      recentFailureCount >= REPLAN_FAILURE_THRESHOLD
-    ) {
-      try {
-        const lastMemory = getLastMemory(history);
-        const recentSummary = history
-          .slice(-6)
-          .map((s) => `${s.action.action}${s.action.error_feedback !== undefined ? '(FAILED)' : ''}: ${s.action.reasoning}`)
-          .join('\n');
+    // Every REPLAN_CHECK_INTERVAL steps, if we've had enough failures since the last
+    // checkpoint, generate a fresh plan. Always reset the counter at each checkpoint
+    // so stale failures from earlier intervals don't trigger spurious replans.
+    if (step > 0 && step % REPLAN_CHECK_INTERVAL === 0) {
+      const shouldReplan = recentFailureCount >= REPLAN_FAILURE_THRESHOLD;
+      recentFailureCount = 0; // Reset regardless — this is a per-interval counter
+      if (shouldReplan) {
+        try {
+          const lastMemory = getLastMemory(history);
+          const recentSummary = history
+            .slice(-6)
+            .map((s) => `${s.action.action}${s.action.error_feedback !== undefined ? '(FAILED)' : ''}: ${s.action.reasoning}`)
+            .join('\n');
 
-        const replan = await llmJson<{ plan: string }>({
-          system: `You are a browser automation planner. The agent is stuck and needs a new plan.
+          const replan = await llmJson<{ plan: string }>({
+            system: `You are a browser automation planner. The agent is stuck and needs a new plan.
 Analyze what's been tried, what failed, and suggest a DIFFERENT approach.
 Don't repeat strategies that already failed. Be creative — try different site sections, different URLs, different interaction patterns.
 Respond with JSON: {"plan": "your revised plan here"}`,
-          message: `Original task: ${prompt}\n\nOriginal plan: ${planText ?? 'none'}\n\nCurrent page: ${title} (${url})\n\nMemory: ${lastMemory ?? 'none'}\n\nRecent actions:\n${recentSummary}\n\nStep ${String(step)} of ${String(maxSteps)} — ${String(recentFailureCount)} recent failures.`,
-          maxTokens: 256,
-        });
-        if (replan.plan !== '') {
-          planText = replan.plan;
-          recentFailureCount = 0;
-          emit('replan', { step, plan: replan.plan });
-          logger.info({ step }, 'Agent re-planned');
+            message: `Original task: ${prompt}\n\nOriginal plan: ${planText ?? 'none'}\n\nCurrent page: ${title} (${url})\n\nMemory: ${lastMemory ?? 'none'}\n\nRecent actions:\n${recentSummary}\n\nStep ${String(step)} of ${String(maxSteps)} — failures detected in last interval.`,
+            maxTokens: 256,
+          });
+          if (replan.plan !== '') {
+            planText = replan.plan;
+            emit('replan', { step, plan: replan.plan });
+            logger.info({ step }, 'Agent re-planned');
+          }
+        } catch (err) {
+          logger.warn({ err }, 'Re-planning failed');
         }
-      } catch (err) {
-        logger.warn({ err }, 'Re-planning failed');
       }
     }
 
-    // --- Recovery diagnosis ---
+    // --- Recovery diagnosis (check every 4 steps to avoid flooding the LLM context) ---
     let recoveryMessage: string | null = null;
-    const recovery = diagnoseStuckAgent(history, url);
-    if (recovery !== null) {
-      recoveryMessage = formatRecovery(recovery);
-      logger.info({ step, diagnosis: recovery.diagnosis }, 'Recovery strategy triggered');
+    if (step > 0 && step % 4 === 0) {
+      const recovery = diagnoseStuckAgent(history, url);
+      if (recovery !== null) {
+        recoveryMessage = formatRecovery(recovery);
+        logger.info({ step, diagnosis: recovery.diagnosis }, 'Recovery strategy triggered');
+      }
     }
 
     let tabCount: number | undefined;

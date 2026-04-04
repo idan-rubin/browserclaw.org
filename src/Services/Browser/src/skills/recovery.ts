@@ -1,5 +1,4 @@
 import type { AgentStep } from '../types.js';
-import { logger } from '../logger.js';
 
 /**
  * Analyzes recent agent history and suggests concrete recovery strategies
@@ -46,11 +45,12 @@ export function diagnoseStuckAgent(history: AgentStep[], currentUrl: string): Re
 
 function detectAlternatingFailures(recent: AgentStep[]): RecoveryStrategy | null {
   const failed = recent.filter((s) => s.action.error_feedback !== undefined);
-  if (failed.length < 3) return null;
+  if (failed.length < 5) return null;
 
   // Check if the agent is alternating between 2-3 different actions that all fail
+  // Threshold is 5+ (higher than loop-detection's semantic check at 4) to avoid duplicate nudges
   const failedActions = new Set(failed.map((s) => s.action.action));
-  if (failedActions.size <= 3 && failed.length >= 4) {
+  if (failedActions.size <= 3 && failed.length >= 5) {
     return {
       diagnosis: 'You are alternating between approaches that all fail.',
       suggestions: [
@@ -92,8 +92,12 @@ function detectSearchWithoutResults(recent: AgentStep[]): RecoveryStrategy | nul
   const typeActions = recent.filter((s) => s.action.action === 'type');
   const clickActions = recent.filter((s) => s.action.action === 'click');
 
-  // Typed in search fields multiple times but few or no successful clicks after
-  if (typeActions.length >= 2 && clickActions.length <= 1) {
+  // Only trigger if same field was typed into multiple times (re-searching) — not for multi-field forms
+  const typedRefs = typeActions.map((s) => s.action.ref).filter(Boolean);
+  const uniqueTypedRefs = new Set(typedRefs);
+  const hasRepeatedSearches = typedRefs.length >= 2 && uniqueTypedRefs.size === 1;
+
+  if (hasRepeatedSearches && clickActions.length <= 1) {
     return {
       diagnosis: 'You have typed search queries but are not clicking on results.',
       suggestions: [
@@ -138,7 +142,6 @@ function detectNavigationLoop(recent: AgentStep[]): RecoveryStrategy | null {
   // Detect A→B→A→B pattern
   const urlSet = new Set(urls);
   if (urlSet.size === 2 && urls.length >= 4) {
-    const [urlA, urlB] = [...urlSet];
     // Check if alternating
     let alternating = true;
     for (let i = 1; i < urls.length; i++) {
