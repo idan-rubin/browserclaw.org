@@ -75,6 +75,13 @@ Complex tasks:
 - For research tasks: gather first, analyze second, synthesize last. Don't try to answer before you have the data.
 - Your "answer" for complex tasks should be structured: use sections, bullet points, or a ranking — not a single sentence.
 
+Result scoping:
+- If the task asks you to "find", "search for", or "look for" multiple items without specifying a count, collect exactly 5 results with key details — then stop and deliver.
+- Do NOT endlessly browse, paginate, or click into dozens of listings. 5 well-detailed results beats 20 shallow ones.
+- For each result, extract: name/title, price (if applicable), key attributes, and URL.
+- Once you have 5 complete results, use "done" immediately with a structured answer. Don't keep looking for more.
+- If the task specifies a number (e.g. "find 3 hotels"), use that number instead of 5.
+
 Page processing:
 - Extract ALL useful data from a page before navigating away. Don't visit the same page twice.
 - If the snapshot looks sparse, try one scroll down — content may be lazy-loaded.
@@ -262,18 +269,32 @@ interface BuildUserMessageOptions {
   stepsRemaining?: number;
   maxSteps?: number;
   recoveryMessage?: string | null;
+  originalPrompt?: string;
 }
 
 function buildUserMessage(
-  prompt: string,
+  task: string,
   snapshot: string,
   history: AgentStep[],
   url: string,
   title: string,
   opts?: BuildUserMessageOptions,
 ): string {
-  const { plan, tabCount, domainSkill, stepsRemaining, maxSteps: totalSteps, recoveryMessage } = opts ?? {};
-  let message = `Task: ${prompt}\n`;
+  const {
+    plan,
+    tabCount,
+    domainSkill,
+    stepsRemaining,
+    maxSteps: totalSteps,
+    recoveryMessage,
+    originalPrompt,
+  } = opts ?? {};
+  let message = '';
+  if (originalPrompt !== undefined && originalPrompt !== task) {
+    message += `User prompt: ${originalPrompt}\nTask: ${task}\n`;
+  } else {
+    message += `Task: ${task}\n`;
+  }
 
   if (plan !== undefined && plan !== null && plan !== '') {
     message += `\nPlan: ${plan}\n`;
@@ -524,6 +545,10 @@ export async function runAgentLoop(
   const MAX_PARSE_FAILURES = 3;
   const MAX_API_FAILURES = 3;
 
+  // ── Planning + goal refinement (single LLM call) ──────────────────────────
+  // If the prompt is vague (e.g. "find apartments in Chelsea"), the planner
+  // also produces a SMART task with bounded scope (collect top 5 results).
+  let refinedPrompt = prompt;
   let planText: string | null = null;
   try {
     let planMessage = `User prompt: ${prompt}`;
@@ -531,22 +556,38 @@ export async function runAgentLoop(
       planMessage += `\n\nWe have a proven skill for this site: "${domainSkill.skill.title}" — ${domainSkill.skill.description}`;
       planMessage += '\nLeverage it — no need to rediscover what already works.';
     }
-    const plan = await llmJson<{ plan: string }>({
-      system: `You are a browser automation planner. Given a user prompt, create a plan of action. Navigate directly to the best site for the task — never search Google first. If existing skills are provided, incorporate them.
+    const plan = await llmJson<{ task?: string; plan: string }>({
+      system: `You are a browser automation planner. Given a user prompt, produce a SMART task and a plan.
 
-For simple tasks (search, click, fill a form): 2-4 steps.
-For complex tasks (research, compare, rank): break into phases:
-  Phase 1: Gather — what sites to visit, what data to collect
-  Phase 2: Analyze — compare findings, identify patterns
-  Phase 3: Synthesize — rank, summarize, deliver the answer
+Step 1 — Refine the goal into a SMART task:
+- If the prompt is vague or open-ended ("find apartments", "look for flights", "show me hotels"), make it specific:
+  • Add a result limit: "Collect the top 5 results" (unless the user specified a number)
+  • Specify what details to extract for each result (price, name, URL, key attributes)
+  • Scope to one site or one search
+- If the prompt is already specific ("book a flight from NYC to LAX on Dec 15"), return it unchanged.
+- Examples:
+  • "find apartments in Chelsea" → "Search for apartments in Chelsea on a major listings site. Collect the top 5 listings with: name/address, price, bedrooms, and URL."
+  • "compare laptops" → "Search for laptops on an electronics site. Compare the top 5 by: name, price, specs, and rating."
+  • "book a table at Nobu" → "book a table at Nobu" (already specific)
 
-Respond with JSON: {"plan": "your plan here"}`,
+Step 2 — Create an action plan:
+- Navigate directly to the best site for the task — never search Google first.
+- For simple tasks (search, click, fill a form): 2-4 steps.
+- For complex tasks (research, compare, rank): break into phases.
+- If existing skills are provided, incorporate them.
+
+Respond with JSON: {"task": "the SMART task", "plan": "your action plan"}`,
       message: planMessage,
       maxTokens: 256,
     });
+    if (plan.task !== undefined && plan.task !== '' && plan.task !== prompt) {
+      refinedPrompt = plan.task;
+      emit('goal_refined', { original: prompt, refined: refinedPrompt });
+      logger.info('Goal refined');
+    }
     if (plan.plan !== '') {
       planText = plan.plan;
-      emit('plan', { prompt, plan: plan.plan });
+      emit('plan', { prompt: refinedPrompt, plan: plan.plan });
     }
   } catch {
     logger.error('Failed to generate plan');
@@ -603,7 +644,7 @@ Respond with JSON: {"plan": "your plan here"}`,
 Analyze what's been tried, what failed, and suggest a DIFFERENT approach.
 Don't repeat strategies that already failed. Be creative — try different site sections, different URLs, different interaction patterns.
 Respond with JSON: {"plan": "your revised plan here"}`,
-            message: `Original task: ${prompt}\n\nOriginal plan: ${planText ?? 'none'}\n\nCurrent page: ${title} (${url})\n\nMemory: ${lastMemory ?? 'none'}\n\nRecent actions:\n${recentSummary}\n\nStep ${String(step)} of ${String(maxSteps)} — failures detected in last interval.`,
+            message: `Original task: ${refinedPrompt}\n\nOriginal plan: ${planText ?? 'none'}\n\nCurrent page: ${title} (${url})\n\nMemory: ${lastMemory ?? 'none'}\n\nRecent actions:\n${recentSummary}\n\nStep ${String(step)} of ${String(maxSteps)} — failures detected in last interval.`,
             maxTokens: 256,
           });
           if (replan.plan !== '') {
@@ -642,13 +683,14 @@ Respond with JSON: {"plan": "your revised plan here"}`,
     // Keep plan available for longer — it's cheap context and prevents drift
     const planForStep = step <= PLAN_INJECT_MAX_STEP ? planText : null;
     const stepsRemaining = maxSteps - step - 1;
-    const userMessage = buildUserMessage(prompt, snapshot, history, url, title, {
+    const userMessage = buildUserMessage(refinedPrompt, snapshot, history, url, title, {
       plan: planForStep,
       tabCount,
       domainSkill: skillForStep,
       stepsRemaining,
       maxSteps,
       recoveryMessage,
+      originalPrompt: prompt,
     });
 
     // On the last step, force the agent to produce a final answer
@@ -693,7 +735,7 @@ Respond with JSON: {"plan": "your revised plan here"}`,
         );
         emit('step_error', { step, error: 'LLM response was not valid JSON', type: 'parse_error' });
         if (consecutiveParseFailures >= MAX_PARSE_FAILURES) {
-          const answer = await getFinalSummary(prompt, history);
+          const answer = await getFinalSummary(refinedPrompt, history);
           return {
             success: false,
             steps: history,
@@ -888,7 +930,7 @@ Respond with JSON: {"plan": "your revised plan here"}`,
 
   // maxSteps reached — get a final summary of what was accomplished
   logger.warn({ steps: history.length, maxSteps }, 'Agent hit step limit');
-  const summary = await getFinalSummary(prompt, history);
+  const summary = await getFinalSummary(refinedPrompt, history);
   return {
     success: false,
     steps: history,
