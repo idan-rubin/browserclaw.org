@@ -205,8 +205,10 @@ export async function mergeSkills(
     }
   }
 
-  // Use whichever has fewer steps (more efficient), but keep the richer tips/what_worked
-  const useNewSteps = newSkill.steps.length < existing.steps.length;
+  // Use new steps only if existing is significantly longer (1.5× or 3+ more steps)
+  const newSteps = newSkill.steps.length;
+  const oldSteps = existing.steps.length;
+  const useNewSteps = oldSteps > Math.max(newSteps * 1.5, newSteps + 3);
   const steps = useNewSteps ? newSkill.steps : existing.steps;
 
   return {

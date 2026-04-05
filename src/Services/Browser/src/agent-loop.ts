@@ -431,7 +431,7 @@ function parseProgress(parsed: Record<string, unknown>): AgentProgress | null {
   return {
     completed: Array.isArray(p.completed) ? (p.completed as string[]) : [],
     current: typeof p.current === 'string' ? p.current : '',
-    blocked_by: typeof p.blocked_by === 'string' ? p.blocked_by : null,
+    blocked_by: typeof p.blocked_by === 'string' && p.blocked_by !== 'null' ? p.blocked_by : null,
   };
 }
 
@@ -584,18 +584,13 @@ function validateAction(
   action: AgentAction,
   preUrl: string,
   postUrl: string,
-  preSnapshotLength: number,
-  postSnapshotLength: number,
 ): string | undefined {
   const urlChanged = preUrl !== postUrl;
-  const sizeDelta = postSnapshotLength - preSnapshotLength;
-  const significantChange = Math.abs(sizeDelta) > preSnapshotLength * 0.1;
 
   switch (action.action) {
     case 'click':
       if (urlChanged) return `Navigated to new page: ${postUrl}`;
-      if (significantChange) return 'Page content changed after click';
-      return 'Click executed — no visible page change detected. Element may have toggled state, or the click had no effect.';
+      return undefined;
     case 'type':
       return undefined; // Autocomplete detection already handles type validation
     case 'navigate':
@@ -607,7 +602,6 @@ function validateAction(
       return 'Selection made';
     case 'keyboard':
       if (urlChanged) return `Key press triggered navigation to: ${postUrl}`;
-      if (significantChange) return 'Page content changed after key press';
       return undefined;
     case 'back':
     case 'wait':
@@ -646,7 +640,7 @@ async function compressContext(
 4. Current strategy — what the agent is doing now and why
 Be concise but preserve all important data points. Respond with JSON: {"summary": "your summary"}`,
       message: `Task: ${prompt}${progressStr}\n\nFull history (${String(history.length)} steps):\n${stepSummaries}`,
-      maxTokens: 512,
+      maxTokens: 1024,
     });
     return result.summary;
   } catch {
@@ -1073,7 +1067,6 @@ Respond with JSON: {"plan": "your revised plan here"}`,
       // --- Normal actions ---
 
       const preActionUrl = await holder.page.url();
-      const preSnapshotLength = snapshot.length;
 
       try {
         await executeAction(action, holder.page);
@@ -1100,13 +1093,12 @@ Respond with JSON: {"plan": "your revised plan here"}`,
         // Validate action outcome — provide natural language feedback
         try {
           const postActionUrl = await holder.page.url();
-          const postSnapshotLength = (await holder.page.snapshot({ interactive: true, compact: true })).snapshot.length;
-          const outcome = validateAction(action, preActionUrl, postActionUrl, preSnapshotLength, postSnapshotLength);
+          const outcome = validateAction(action, preActionUrl, postActionUrl);
           if (outcome !== undefined) {
             agentStep.outcome = outcome;
           }
         } catch {
-          // Validation snapshot failed — not critical, skip
+          // Validation failed — not critical, skip
         }
       } catch (err) {
         const feedback = describeActionError(action, err);
