@@ -58,7 +58,8 @@ function loadConfig(): { provider: LlmConfig['provider']; model: string; apiKey:
 }
 
 function saveConfig(provider: LlmConfig['provider'], model: string, apiKey: string) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ provider, model, api_key: apiKey }));
+  // User-provided BYOK key — intentional localStorage persistence.
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ provider, model, api_key: apiKey })); // codeql[js/clear-text-storage-of-sensitive-data]
 }
 
 export function useLlmConfig() {
