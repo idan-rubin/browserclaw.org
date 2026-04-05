@@ -70,7 +70,7 @@ export function detectPageState(input: DetectPageStateInput): PageState {
 }
 
 export function shouldBlockDone(state: PageState, historyLength: number, answer?: string): string | null {
-  const answerText = (answer || '').trim();
+  const answerText = (answer ?? '').trim();
   if (historyLength < 2 && answerText.length < 40) {
     return 'You are trying to finish too early. Verify the page and gather at least one concrete result before using done.';
   }
