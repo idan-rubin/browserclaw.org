@@ -733,15 +733,15 @@ Respond with JSON: {"plan": "your revised plan here"}`,
         // LLM responded but not with valid JSON — burn a step, the call was made
         consecutiveParseFailures++;
         logger.warn(
-          {
-            step,
-            attempt: consecutiveParseFailures,
-            maxAttempts: MAX_PARSE_FAILURES,
-            rawText: err.responseSnippet,
-          },
+          { step, attempt: consecutiveParseFailures, maxAttempts: MAX_PARSE_FAILURES },
           'LLM returned non-JSON response',
         );
-        emit('step_error', { step, error: 'LLM response was not valid JSON', type: 'parse_error' });
+        emit('step_error', {
+          step,
+          error: 'LLM response was not valid JSON',
+          type: 'parse_error',
+          rawText: err.responseSnippet,
+        });
         if (consecutiveParseFailures >= MAX_PARSE_FAILURES) {
           const answer = await getFinalSummary(refinedPrompt, history);
           return {
@@ -758,12 +758,8 @@ Respond with JSON: {"plan": "your revised plan here"}`,
 
       // API/network error — don't burn a step, the agent never got to act
       consecutiveApiFailures++;
-      const apiError = sanitizeErrorText(err instanceof Error ? err.message : 'LLM API call failed');
-      logger.error(
-        { step, attempt: consecutiveApiFailures, maxAttempts: MAX_API_FAILURES },
-        `LLM API error: ${apiError}`,
-      );
-      emit('step_error', { step, error: `AI service error: ${apiError}`, type: 'api_error' });
+      logger.error({ step, attempt: consecutiveApiFailures, maxAttempts: MAX_API_FAILURES }, 'LLM API error');
+      emit('step_error', { step, error: 'AI service temporarily unavailable', type: 'api_error' });
       if (consecutiveApiFailures >= MAX_API_FAILURES) {
         return {
           success: false,
