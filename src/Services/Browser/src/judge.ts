@@ -55,13 +55,10 @@ export async function judgeRun(prompt: string, result: AgentLoopResult): Promise
       message: buildJudgeMessage(prompt, result),
       maxTokens: 256,
     });
-    logger.info({ success: verdict.success, judge_ran: true }, 'Judge verdict');
+    logger.info({ judge_ran: true, verdict_success: verdict.success }, 'Judge verdict');
     return verdict;
-  } catch (err) {
-    logger.warn(
-      { error_type: err instanceof Error ? err.constructor.name : 'unknown' },
-      'Judge evaluation failed — defaulting to agent result',
-    );
+  } catch {
+    logger.warn({ judge_failed: true }, 'Judge evaluation failed — defaulting to agent result');
     return { success: result.success, reasoning: 'Judge evaluation failed' };
   }
 }

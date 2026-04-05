@@ -336,10 +336,7 @@ async function startAgentLoop(sessionId: string): Promise<void> {
   } catch (err) {
     managed.status = 'failed';
     const message = err instanceof Error ? err.message : 'Agent loop crashed';
-    logger.error(
-      { sessionId, error_type: err instanceof Error ? err.constructor.name : 'unknown' },
-      'Agent loop crashed',
-    );
+    logger.error({ sessionId, crashed: true }, 'Agent loop crashed');
     emitter('failed', { step: 0, error: message });
   }
 
@@ -530,27 +527,13 @@ async function tryGenerateSkill(
           emitter('skill_saved', { domain: managed.domain, title: skill.title, tags });
           return 'saved';
         }
-      } catch (err) {
-        logger.error(
-          {
-            domain: managed.domain,
-            save_failed: true,
-            error_type: err instanceof Error ? err.constructor.name : 'unknown',
-          },
-          'Failed to save skill',
-        );
+      } catch {
+        logger.error({ domain: managed.domain, save_failed: true }, 'Failed to save skill');
       }
     }
     return 'none';
-  } catch (err) {
-    logger.error(
-      {
-        sessionId: managed.id,
-        skill_generation_failed: true,
-        error_type: err instanceof Error ? err.constructor.name : 'unknown',
-      },
-      'Skill generation failed',
-    );
+  } catch {
+    logger.error({ sessionId: managed.id, skill_generation_failed: true }, 'Skill generation failed');
     return 'none';
   }
 }
