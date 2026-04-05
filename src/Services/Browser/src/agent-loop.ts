@@ -3,6 +3,7 @@ import { pressAndHold, detectAntiBot, enrichSnapshot, getPageText } from './skil
 import { clickCloudflareCheckbox } from './skills/cloudflare-checkbox.js';
 import { detectPopup, dismissPopup } from './skills/dismiss-popup.js';
 import { detectLoop } from './skills/loop-detection.js';
+import { detectPageState, shouldBlockDone } from './skills/page-state.js';
 import { diagnoseStuckAgent, formatRecovery } from './skills/recovery.js';
 import { TabManager } from './skills/tab-manager.js';
 import { getCdpBaseUrl, activateCdpTarget } from './skills/cdp-utils.js';
@@ -73,8 +74,9 @@ Rules:
 - "extract" when the accessibility snapshot is missing data you need — prices, descriptions, table values, form field values, counts, or any text that's visually on the page but absent from the snapshot. Provide a JavaScript expression; the result appears in the next step. Examples: 'document.querySelector(".price")?.textContent', 'Array.from(document.querySelectorAll("td")).map(el=>el.textContent.trim())'. Use this like a human would: when you can see there's content but can't read it from the snapshot.
 - "switch_tab" to switch to a different open tab. Use the tab_id from the tab list shown in the context. Use this when a link opened a new tab and you want to return to a previous one, or when the information you need is in a different tab.
 - "close_tab" to close a tab by tab_id. Use only when a tab is no longer needed.
+- Perception ladder: use the cheapest sufficient method first — accessibility snapshot -> DOM text -> extract -> screenshot fallback -> ask_user.
 - "ask_user" only when you need info you can't get from the page (MFA codes, credentials, preferences).
-- "done" when finished. Include "answer" if the task asked a question — be specific with what you found.
+- "done" when finished. Include "answer" if the task asked a question — be specific with what you found. Before done, verify you actually satisfied the task.
 - "fail" when the task is impossible. In reasoning, give a SHORT summary: what you tried, why it failed, and any partial results you found. Don't dump your full scratchpad — the user sees this.
 - If a PLAYBOOK is provided, follow it. Deviate only if a step fails.
 
@@ -324,6 +326,7 @@ interface BuildUserMessageOptions {
   plan?: string | null;
   tabCount?: number;
   tabs?: TabInfo[];
+  pageState?: string;
   domainSkill?: CatalogSkill | null;
   stepsRemaining?: number;
   maxSteps?: number;
@@ -346,6 +349,7 @@ function buildUserMessage(
     plan,
     tabCount,
     tabs,
+    pageState,
     domainSkill,
     stepsRemaining,
     maxSteps: totalSteps,
@@ -445,6 +449,9 @@ function buildUserMessage(
   } else if (tabCount !== undefined && tabCount > 1) {
     message += `Open tabs: ${String(tabCount)}\n`;
   }
+  if (pageState !== undefined && pageState !== '') {
+    message += `Detected page state: ${pageState}\n`;
+  }
   message += '\n';
 
   if (contextLevel === 'minimal') {
@@ -488,6 +495,7 @@ interface ParsedActionItem {
   direction?: string;
   expression?: string;
   tab_id?: string;
+  confidence?: string;
   answer?: string;
 }
 
@@ -861,6 +869,7 @@ Respond with JSON: {"task": "the SMART task", "plan": "your action plan"}`,
     if (antiBotType !== null) {
       snapshot = enrichSnapshot(snapshot, domText, antiBotType);
     }
+    const pageState = detectPageState({ snapshot, domText, title, url, antiBotType });
 
     // #5 Screenshot fallback: when a11y snapshot and DOM text are both sparse,
     // take a screenshot and use vision to extract what's visually present.
@@ -991,6 +1000,7 @@ Respond with JSON: {"plan": "your revised plan here"}`,
       plan: planForStep,
       tabCount,
       tabs,
+      pageState,
       domainSkill: skillForStep,
       stepsRemaining,
       maxSteps,
@@ -1119,6 +1129,13 @@ Respond with JSON: {"plan": "your revised plan here"}`,
       // --- Terminal actions ---
 
       if (action.action === 'done') {
+        const doneBlockReason = shouldBlockDone(pageState, history.length, action.answer);
+        if (doneBlockReason !== null) {
+          agentStep.action.error_feedback = doneBlockReason;
+          recentFailureCount++;
+          step++;
+          break;
+        }
         return {
           success: true,
           steps: history,
