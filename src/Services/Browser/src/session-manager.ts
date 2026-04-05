@@ -528,12 +528,18 @@ async function tryGenerateSkill(
           return 'saved';
         }
       } catch (err) {
-        logger.error({ domain: managed.domain, error: sanitizeErrorText(err instanceof Error ? err.message : String(err)) }, 'Failed to save skill');
+        logger.error(
+          { domain: managed.domain, error: sanitizeErrorText(err instanceof Error ? err.message : String(err)) },
+          'Failed to save skill',
+        );
       }
     }
     return 'none';
   } catch (err) {
-    logger.error({ sessionId: managed.id, error: sanitizeErrorText(err instanceof Error ? err.message : String(err)) }, 'Skill generation failed');
+    logger.error(
+      { sessionId: managed.id, error: sanitizeErrorText(err instanceof Error ? err.message : String(err)) },
+      'Skill generation failed',
+    );
     return 'none';
   }
 }
