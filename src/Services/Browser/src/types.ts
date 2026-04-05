@@ -67,6 +67,14 @@ export interface AgentStep {
   page_title?: string;
   timestamp: string;
   user_response?: string;
+  /** Natural language description of the action outcome — what changed on the page */
+  outcome?: string;
+}
+
+export interface AgentProgress {
+  completed: string[];
+  current: string;
+  blocked_by: string | null;
 }
 
 export interface SkillOutput {
@@ -74,6 +82,10 @@ export interface SkillOutput {
   description: string;
   steps: SkillStep[];
   tips: string[];
+  /** Patterns that worked well during execution */
+  what_worked?: string[];
+  /** Known failure modes from rejected runs */
+  failure_notes?: string[];
   metadata: SkillMetadata;
   markdown: string;
 }

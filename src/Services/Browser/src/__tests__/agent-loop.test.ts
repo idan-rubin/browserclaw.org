@@ -297,7 +297,7 @@ describe('runAgentLoop', () => {
     const result: AgentLoopResult = await runAgentLoop('Click button', page, emit, controller.signal);
 
     expect(result.success).toBe(true);
-    expect(result.steps[0].action.error_feedback).toBe('Element not found');
+    expect(result.steps[0].action.error_feedback).toContain('not found');
   });
 
   it('resets parse failure counter on successful parse', async () => {

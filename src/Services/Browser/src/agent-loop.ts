@@ -7,7 +7,7 @@ import { diagnoseStuckAgent, formatRecovery } from './skills/recovery.js';
 import { TabManager } from './skills/tab-manager.js';
 import { llmJson, sanitizeErrorText } from './llm.js';
 import { LlmParseError } from './types.js';
-import type { AgentAction, AgentStep, AgentLoopResult, CatalogSkill } from './types.js';
+import type { AgentAction, AgentStep, AgentLoopResult, AgentProgress, CatalogSkill } from './types.js';
 import { logger } from './logger.js';
 import {
   WAIT_AFTER_TYPE_MS,
@@ -23,8 +23,13 @@ const SYSTEM_PROMPT = `You are a browser automation agent. You read accessibilit
 
 Respond with valid JSON:
 {
-  "evaluation_previous_goal": "Did the previous action succeed? What changed? What went wrong? (skip on first step)",
+  "evaluation_previous_goal": "Did the previous action succeed? What changed? What went wrong? Check the outcome feedback from the last step. (skip on first step)",
   "memory": "Running scratchpad of ALL accumulated data: names, prices, URLs, findings, comparisons. Carry forward everything from previous memory — never drop data. This is your only persistent storage between steps.",
+  "progress": {
+    "completed": ["short descriptions of completed phases/milestones"],
+    "current": "what you're working on right now",
+    "blocked_by": "what's blocking you, or null"
+  },
   "next_goal": "What you will do next and why — one clear sentence",
   "reasoning": "Brief explanation of what you're doing right now",
   "actions": [
@@ -194,14 +199,14 @@ async function safeSnapshot(page: CrawlPage): Promise<string> {
 
 const SKILL_INJECT_MAX_STEP = 2;
 const PLAN_INJECT_MAX_STEP = 8;
-const HISTORY_RECENT_WINDOW = 10;
+const HISTORY_RECENT_WINDOW = 8;
 const MAX_ACTIONS_PER_STEP = 4;
-const REPLAN_CHECK_INTERVAL = 8;
+const REPLAN_BASE_INTERVAL = 8;
 const REPLAN_FAILURE_THRESHOLD = 3;
+const CONTEXT_COMPRESS_INTERVAL = 20;
 
-function truncateHistory(history: AgentStep[]): string {
+function truncateHistory(history: AgentStep[], contextSummary?: string): string {
   if (history.length <= HISTORY_RECENT_WINDOW) {
-    // All history fits in window — render fully
     let out = 'Previous actions:\n';
     for (const step of history) {
       out += formatStep(step);
@@ -209,34 +214,37 @@ function truncateHistory(history: AgentStep[]): string {
     return out;
   }
 
-  // Summarize older steps, show recent ones in full
-  const older = history.slice(0, history.length - HISTORY_RECENT_WINDOW);
   const recent = history.slice(history.length - HISTORY_RECENT_WINDOW);
 
   let out = `Previous actions (${String(history.length)} total, showing last ${String(HISTORY_RECENT_WINDOW)} in detail):\n`;
-  out += '  Earlier steps summary: ';
-  out += older.map((s) => `${s.action.action}${s.action.error_feedback !== undefined ? '(FAILED)' : ''}`).join(' → ');
-  out += '\n';
 
-  // Include milestone steps from older history — steps where significant findings were recorded
-  const milestones = older.filter(
-    (s) =>
-      s.action.action === 'navigate' ||
-      (s.action.memory !== undefined && s.action.memory.length > 50) ||
-      s.action.action === 'type',
-  );
-  if (milestones.length > 0) {
-    out += '  Key earlier milestones:\n';
-    for (const m of milestones.slice(-5)) {
-      out += `    Step ${String(m.step)}: [${m.action.action}] ${m.action.reasoning.substring(0, 150)}`;
-      if (m.url !== undefined) out += ` (${m.url})`;
-      out += '\n';
+  if (contextSummary !== undefined && contextSummary !== '') {
+    out += `  Session context: ${contextSummary}\n\n`;
+  } else {
+    // Fall back to arrow-chain summary when no compressed context available
+    const older = history.slice(0, history.length - HISTORY_RECENT_WINDOW);
+    out += '  Earlier steps summary: ';
+    out += older.map((s) => `${s.action.action}${s.action.error_feedback !== undefined ? '(FAILED)' : ''}`).join(' → ');
+    out += '\n';
+
+    const milestones = older.filter(
+      (s) =>
+        s.action.action === 'navigate' ||
+        (s.action.memory !== undefined && s.action.memory.length > 50) ||
+        s.action.action === 'type',
+    );
+    if (milestones.length > 0) {
+      out += '  Key earlier milestones:\n';
+      for (const m of milestones.slice(-5)) {
+        out += `    Step ${String(m.step)}: [${m.action.action}] ${m.action.reasoning.substring(0, 150)}`;
+        if (m.url !== undefined) out += ` (${m.url})`;
+        out += '\n';
+      }
     }
-  }
 
-  // Include the last older step's reasoning as context bridge
-  const lastOlderStep = older[older.length - 1];
-  out += `  [Context from step ${String(lastOlderStep.step)}]: ${lastOlderStep.action.reasoning.substring(0, 300)}\n\n`;
+    const lastOlderStep = older[older.length - 1];
+    out += `  [Context from step ${String(lastOlderStep.step)}]: ${lastOlderStep.action.reasoning.substring(0, 300)}\n\n`;
+  }
 
   for (const step of recent) {
     out += formatStep(step);
@@ -246,6 +254,9 @@ function truncateHistory(history: AgentStep[]): string {
 
 function formatStep(step: AgentStep): string {
   let line = `  Step ${String(step.step)}: ${step.action.action} — ${step.action.reasoning}\n`;
+  if (step.outcome !== undefined) {
+    line += `    → Outcome: ${step.outcome}\n`;
+  }
   if (step.action.error_feedback !== undefined) {
     line += `    ⚠ ACTION FAILED: ${step.action.error_feedback}\n`;
   }
@@ -272,6 +283,8 @@ interface BuildUserMessageOptions {
   maxSteps?: number;
   recoveryMessage?: string | null;
   originalPrompt?: string;
+  contextSummary?: string;
+  progress?: AgentProgress | null;
 }
 
 function buildUserMessage(
@@ -290,6 +303,8 @@ function buildUserMessage(
     maxSteps: totalSteps,
     recoveryMessage,
     originalPrompt,
+    contextSummary,
+    progress,
   } = opts ?? {};
   let message = '';
   if (originalPrompt !== undefined && originalPrompt !== task) {
@@ -313,6 +328,13 @@ function buildUserMessage(
     (totalSteps - stepsRemaining) / totalSteps >= 0.75
   ) {
     message += `\n⚠ You've used 75% of your step budget. Start consolidating your findings. If you have enough data, use "done" soon.\n`;
+  } else if (
+    stepsRemaining !== undefined &&
+    totalSteps !== undefined &&
+    totalSteps > 0 &&
+    (totalSteps - stepsRemaining) / totalSteps >= 0.5
+  ) {
+    message += `\nℹ Halfway through your step budget. Make sure you're making progress toward the goal.\n`;
   }
 
   if (recoveryMessage !== undefined && recoveryMessage !== null) {
@@ -333,7 +355,31 @@ function buildUserMessage(
         message += `  - ${tip}\n`;
       }
     }
+    if (domainSkill.skill.what_worked !== undefined && domainSkill.skill.what_worked.length > 0) {
+      message += '\nWhat worked before:\n';
+      for (const w of domainSkill.skill.what_worked) {
+        message += `  - ${w}\n`;
+      }
+    }
+    if (domainSkill.skill.failure_notes !== undefined && domainSkill.skill.failure_notes.length > 0) {
+      message += '\n⚠ Known failure modes (avoid these):\n';
+      for (const note of domainSkill.skill.failure_notes) {
+        message += `  - ${note}\n`;
+      }
+    }
     message += '--- END PLAYBOOK ---\n';
+  }
+
+  // Progress tracking — structured view of where the agent is
+  if (progress !== undefined && progress !== null) {
+    message += '\n📊 Progress:\n';
+    if (progress.completed.length > 0) {
+      message += `  Completed: ${progress.completed.join(' → ')}\n`;
+    }
+    message += `  Current: ${progress.current}\n`;
+    if (progress.blocked_by !== null) {
+      message += `  ⚠ Blocked by: ${progress.blocked_by}\n`;
+    }
   }
 
   const lastMemory = getLastMemory(history);
@@ -348,7 +394,7 @@ function buildUserMessage(
   message += '\n';
 
   if (history.length > 0) {
-    message += truncateHistory(history);
+    message += truncateHistory(history, contextSummary);
     message += '\n';
   }
 
@@ -376,6 +422,17 @@ interface ParsedActionItem {
   options?: string[];
   direction?: string;
   answer?: string;
+}
+
+function parseProgress(parsed: Record<string, unknown>): AgentProgress | null {
+  const raw = parsed.progress;
+  if (raw === undefined || raw === null || typeof raw !== 'object') return null;
+  const p = raw as Record<string, unknown>;
+  return {
+    completed: Array.isArray(p.completed) ? (p.completed as string[]) : [],
+    current: typeof p.current === 'string' ? p.current : '',
+    blocked_by: typeof p.blocked_by === 'string' ? p.blocked_by : null,
+  };
 }
 
 function parseActions(parsed: Record<string, unknown>): AgentAction[] {
@@ -499,6 +556,105 @@ function getWaitMs(action: AgentAction['action']): number {
   }
 }
 
+function describeActionError(action: AgentAction, err: unknown): string {
+  const raw = err instanceof Error ? err.message : 'Action execution failed';
+  const lower = raw.toLowerCase();
+  if (action.action === 'click' || action.action === 'type' || action.action === 'select') {
+    if (lower.includes('not found') || lower.includes('no element'))
+      return `Element ref ${action.ref ?? '?'} not found — it may have been removed by a page update or is outside the visible area. Try scrolling or re-reading the page.`;
+    if (lower.includes('intercept') || lower.includes('covered') || lower.includes('obscured'))
+      return `Click on ref ${action.ref ?? '?'} was intercepted by another element covering it — dismiss any overlays or popups first.`;
+    if (lower.includes('detach') || lower.includes('stale'))
+      return `Element ref ${action.ref ?? '?'} became stale — the page content changed. Take a new snapshot and find the updated element.`;
+    if (lower.includes('disabled') || lower.includes('not interactable'))
+      return `Element ref ${action.ref ?? '?'} is disabled or not interactable — check if a prerequisite field needs to be filled first.`;
+  }
+  if (action.action === 'navigate') {
+    if (lower.includes('timeout') || lower.includes('timed out'))
+      return `Navigation to ${action.url ?? 'URL'} timed out — the page may be loading slowly or the URL may be incorrect.`;
+    if (lower.includes('err_name_not_resolved') || lower.includes('dns'))
+      return `Could not resolve ${action.url ?? 'URL'} — the domain may be incorrect. Double-check the URL.`;
+    if (lower.includes('refused') || lower.includes('blocked'))
+      return `Connection to ${action.url ?? 'URL'} was refused or blocked. Try a different URL or approach.`;
+  }
+  return raw;
+}
+
+function validateAction(
+  action: AgentAction,
+  preUrl: string,
+  postUrl: string,
+  preSnapshotLength: number,
+  postSnapshotLength: number,
+): string | undefined {
+  const urlChanged = preUrl !== postUrl;
+  const sizeDelta = postSnapshotLength - preSnapshotLength;
+  const significantChange = Math.abs(sizeDelta) > preSnapshotLength * 0.1;
+
+  switch (action.action) {
+    case 'click':
+      if (urlChanged) return `Navigated to new page: ${postUrl}`;
+      if (significantChange) return 'Page content changed after click';
+      return 'Click executed — no visible page change detected. Element may have toggled state, or the click had no effect.';
+    case 'type':
+      return undefined; // Autocomplete detection already handles type validation
+    case 'navigate':
+      if (urlChanged) return `Navigated to: ${postUrl}`;
+      return 'Navigate executed but URL unchanged — page may have redirected back.';
+    case 'scroll':
+      return undefined; // Scrolls are always "successful"
+    case 'select':
+      return 'Selection made';
+    case 'keyboard':
+      if (urlChanged) return `Key press triggered navigation to: ${postUrl}`;
+      if (significantChange) return 'Page content changed after key press';
+      return undefined;
+    case 'back':
+    case 'wait':
+    case 'done':
+    case 'fail':
+    case 'ask_user':
+    case 'press_and_hold':
+    case 'click_cloudflare':
+      return undefined;
+  }
+}
+
+async function compressContext(
+  prompt: string,
+  history: AgentStep[],
+  currentProgress: AgentProgress | null,
+): Promise<string> {
+  try {
+    const stepSummaries = history
+      .map(
+        (s) =>
+          `Step ${String(s.step)}: [${s.action.action}] ${s.action.reasoning}${s.action.error_feedback !== undefined ? ' (FAILED)' : ''}${s.outcome !== undefined ? ` → ${s.outcome}` : ''}`,
+      )
+      .join('\n');
+
+    const progressStr =
+      currentProgress !== null
+        ? `\nProgress: completed=[${currentProgress.completed.join(', ')}], current="${currentProgress.current}", blocked_by=${currentProgress.blocked_by ?? 'none'}`
+        : '';
+
+    const result = await llmJson<{ summary: string }>({
+      system: `Summarize this browser automation session into a compact context block. Include:
+1. Task progress — what has been accomplished so far
+2. Key findings — data, URLs, names, prices discovered
+3. Failed approaches — what was tried and didn't work (so we don't repeat)
+4. Current strategy — what the agent is doing now and why
+Be concise but preserve all important data points. Respond with JSON: {"summary": "your summary"}`,
+      message: `Task: ${prompt}${progressStr}\n\nFull history (${String(history.length)} steps):\n${stepSummaries}`,
+      maxTokens: 512,
+    });
+    return result.summary;
+  } catch {
+    logger.warn('Context compression failed — falling back to simple truncation');
+    return '';
+  }
+}
+
 async function getFinalSummary(prompt: string, history: AgentStep[]): Promise<string | undefined> {
   try {
     const lastMemory = getLastMemory(history);
@@ -598,6 +754,11 @@ Respond with JSON: {"task": "the SMART task", "plan": "your action plan"}`,
 
   let step = 0;
   let recentFailureCount = 0;
+  let replanInterval = REPLAN_BASE_INTERVAL;
+  let nextReplanStep = replanInterval;
+  let contextSummary = '';
+  let lastProgress: AgentProgress | null = null;
+  let lastDomain = '';
   while (step < maxSteps) {
     if (signal.aborted) {
       return {
@@ -624,40 +785,79 @@ Respond with JSON: {"task": "the SMART task", "plan": "your action plan"}`,
 
     emit('thinking', { step, message: `Analyzing page: ${title}` });
 
-    // --- Re-planning checkpoint ---
-    // Every REPLAN_CHECK_INTERVAL steps, if we've had enough failures since the last
-    // checkpoint, generate a fresh plan. Always reset the counter at each checkpoint
-    // so stale failures from earlier intervals don't trigger spurious replans.
-    if (step > 0 && step % REPLAN_CHECK_INTERVAL === 0) {
-      const shouldReplan = recentFailureCount >= REPLAN_FAILURE_THRESHOLD;
-      recentFailureCount = 0; // Reset regardless — this is a per-interval counter
-      if (shouldReplan) {
-        try {
-          const lastMemory = getLastMemory(history);
-          const recentSummary = history
-            .slice(-6)
-            .map(
-              (s) =>
-                `${s.action.action}${s.action.error_feedback !== undefined ? '(FAILED)' : ''}: ${s.action.reasoning}`,
-            )
-            .join('\n');
+    // --- Context compression ---
+    if (step > 0 && step % CONTEXT_COMPRESS_INTERVAL === 0) {
+      contextSummary = await compressContext(refinedPrompt, history, lastProgress);
+      if (contextSummary !== '') {
+        logger.info({ step }, 'Context compressed');
+        emit('context_compressed', { step, summary_length: contextSummary.length });
+      }
+    }
 
-          const replan = await llmJson<{ plan: string }>({
-            system: `You are a browser automation planner. The agent is stuck and needs a new plan.
+    // --- Domain change detection (proactive replanning trigger) ---
+    let domainChanged = false;
+    try {
+      const currentDomain = new URL(url).hostname;
+      if (lastDomain !== '' && currentDomain !== lastDomain) {
+        domainChanged = true;
+      }
+      lastDomain = currentDomain;
+    } catch {
+      // URL may not be parseable (about:blank etc.)
+    }
+
+    // --- Re-planning checkpoint ---
+    // Uses adaptive intervals: extends when healthy, contracts on failures.
+    // Also triggers on domain changes (proactive).
+    const atReplanCheckpoint = step > 0 && step >= nextReplanStep;
+    const shouldReplan =
+      (atReplanCheckpoint && recentFailureCount >= REPLAN_FAILURE_THRESHOLD) || (domainChanged && step > 4);
+
+    if (atReplanCheckpoint) {
+      if (recentFailureCount < REPLAN_FAILURE_THRESHOLD) {
+        replanInterval = Math.min(replanInterval + 4, 20); // Extend interval when healthy
+      } else {
+        replanInterval = Math.max(replanInterval - 2, 6); // Contract interval on failures
+      }
+      nextReplanStep = step + replanInterval;
+      recentFailureCount = 0;
+    }
+
+    if (shouldReplan) {
+      try {
+        const lastMemory = getLastMemory(history);
+        const recentSummary = history
+          .slice(-6)
+          .map(
+            (s) =>
+              `${s.action.action}${s.action.error_feedback !== undefined ? '(FAILED)' : ''}: ${s.action.reasoning}`,
+          )
+          .join('\n');
+
+        const progressContext =
+          lastProgress !== null
+            ? `\nProgress: completed=[${lastProgress.completed.join(', ')}], current="${lastProgress.current}"${lastProgress.blocked_by !== null ? `, blocked_by="${lastProgress.blocked_by}"` : ''}`
+            : '';
+        const replanReason = domainChanged
+          ? 'navigated to a different site/section'
+          : 'failures detected in last interval';
+
+        const replan = await llmJson<{ plan: string }>({
+          system: `You are a browser automation planner. The agent needs a new plan.
 Analyze what's been tried, what failed, and suggest a DIFFERENT approach.
 Don't repeat strategies that already failed. Be creative — try different site sections, different URLs, different interaction patterns.
+Include a specific alternative strategy, not just "try something different".
 Respond with JSON: {"plan": "your revised plan here"}`,
-            message: `Original task: ${refinedPrompt}\n\nOriginal plan: ${planText ?? 'none'}\n\nCurrent page: ${title} (${url})\n\nMemory: ${lastMemory ?? 'none'}\n\nRecent actions:\n${recentSummary}\n\nStep ${String(step)} of ${String(maxSteps)} — failures detected in last interval.`,
-            maxTokens: 256,
-          });
-          if (replan.plan !== '') {
-            planText = replan.plan;
-            emit('replan', { step, plan: replan.plan });
-            logger.info({ step }, 'Agent re-planned');
-          }
-        } catch {
-          logger.warn('Re-planning failed');
+          message: `Original task: ${refinedPrompt}\n\nOriginal plan: ${planText ?? 'none'}\n\nCurrent page: ${title} (${url})${progressContext}\n\nMemory: ${lastMemory ?? 'none'}\n\nRecent actions:\n${recentSummary}\n\nStep ${String(step)} of ${String(maxSteps)} — ${replanReason}.`,
+          maxTokens: 256,
+        });
+        if (replan.plan !== '') {
+          planText = replan.plan;
+          emit('replan', { step, plan: replan.plan });
+          logger.info({ step }, 'Agent re-planned');
         }
+      } catch {
+        logger.warn('Re-planning failed');
       }
     }
 
@@ -694,6 +894,8 @@ Respond with JSON: {"plan": "your revised plan here"}`,
       maxSteps,
       recoveryMessage,
       originalPrompt: prompt,
+      contextSummary,
+      progress: lastProgress,
     });
 
     // On the last step, force the agent to produce a final answer
@@ -717,6 +919,12 @@ Respond with JSON: {"plan": "your revised plan here"}`,
       }
       consecutiveParseFailures = 0;
       consecutiveApiFailures = 0;
+
+      // Extract progress tracking (backward compatible — falls back to null if not provided)
+      const stepProgress = parseProgress(parsed);
+      if (stepProgress !== null) {
+        lastProgress = stepProgress;
+      }
       logger.info(
         { step, actionCount: actions.length, firstAction: actions[0].action, reasoning: actions[0].reasoning },
         'Agent step',
@@ -864,6 +1072,9 @@ Respond with JSON: {"plan": "your revised plan here"}`,
 
       // --- Normal actions ---
 
+      const preActionUrl = await holder.page.url();
+      const preSnapshotLength = snapshot.length;
+
       try {
         await executeAction(action, holder.page);
 
@@ -885,11 +1096,24 @@ Respond with JSON: {"plan": "your revised plan here"}`,
             );
           }
         }
+
+        // Validate action outcome — provide natural language feedback
+        try {
+          const postActionUrl = await holder.page.url();
+          const postSnapshotLength = (await holder.page.snapshot({ interactive: true, compact: true })).snapshot.length;
+          const outcome = validateAction(action, preActionUrl, postActionUrl, preSnapshotLength, postSnapshotLength);
+          if (outcome !== undefined) {
+            agentStep.outcome = outcome;
+          }
+        } catch {
+          // Validation snapshot failed — not critical, skip
+        }
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Action execution failed';
-        logger.error({ step, action: action.action, error: message }, 'Action execution failed');
-        emit('step_error', { step, action: action.action, error: message });
-        agentStep.action.error_feedback = message;
+        const feedback = describeActionError(action, err);
+        const rawMessage = err instanceof Error ? err.message : 'Action execution failed';
+        logger.error({ step, action: action.action, error: rawMessage }, 'Action execution failed');
+        emit('step_error', { step, action: action.action, error: rawMessage });
+        agentStep.action.error_feedback = feedback;
         recentFailureCount++;
         await holder.page.waitFor({ timeMs: 1000 });
 
