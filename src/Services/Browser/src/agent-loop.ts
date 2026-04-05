@@ -970,7 +970,7 @@ Respond with JSON: {"plan": "your revised plan here"}`,
     let tabs: TabInfo[] | undefined;
     if (browser !== undefined) {
       try {
-        const allTabs = await browser.tabs() as TabInfo[];
+        const allTabs = (await browser.tabs()) as TabInfo[];
         tabCount = allTabs.length;
         if (tabCount > 1) tabs = allTabs;
       } catch (err) {
@@ -1048,7 +1048,8 @@ Respond with JSON: {"plan": "your revised plan here"}`,
           if (domText.trim().length > 100) {
             const domPreview = domText.slice(0, 800);
             nudgeMessage += `\n\nDOM TEXT (extracted directly — use this to find the data you need):\n${domPreview}${domText.length > 800 ? '\n…(truncated)' : ''}`;
-            nudgeMessage += '\n\nIf you have partial results, use "done" now with what you have. A partial answer is better than getting stuck.';
+            nudgeMessage +=
+              '\n\nIf you have partial results, use "done" now with what you have. A partial answer is better than getting stuck.';
           }
         }
 
