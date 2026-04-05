@@ -30,14 +30,7 @@ export function detectPageState(input: DetectPageStateInput): PageState {
   }
 
   if (
-    hasAny(joined, [
-      /sign in/i,
-      /log in/i,
-      /login/i,
-      /forgot your password/i,
-      /keep me logged in/i,
-      /create account/i,
-    ])
+    hasAny(joined, [/sign in/i, /log in/i, /login/i, /forgot your password/i, /keep me logged in/i, /create account/i])
   ) {
     return 'login';
   }
