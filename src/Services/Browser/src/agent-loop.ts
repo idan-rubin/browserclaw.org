@@ -264,6 +264,8 @@ function getLastMemory(history: AgentStep[]): string | undefined {
   return undefined;
 }
 
+type ContextLevel = 'full' | 'reduced' | 'minimal';
+
 interface BuildUserMessageOptions {
   plan?: string | null;
   tabCount?: number;
@@ -272,6 +274,7 @@ interface BuildUserMessageOptions {
   maxSteps?: number;
   recoveryMessage?: string | null;
   originalPrompt?: string;
+  contextLevel?: ContextLevel;
 }
 
 function buildUserMessage(
@@ -290,6 +293,7 @@ function buildUserMessage(
     maxSteps: totalSteps,
     recoveryMessage,
     originalPrompt,
+    contextLevel = 'full',
   } = opts ?? {};
   let message = '';
   if (originalPrompt !== undefined && originalPrompt !== task) {
@@ -298,7 +302,8 @@ function buildUserMessage(
     message += `Task: ${task}\n`;
   }
 
-  if (plan !== undefined && plan !== null && plan !== '') {
+  // In reduced/minimal mode, drop plan and playbook to shrink context
+  if (contextLevel === 'full' && plan !== undefined && plan !== null && plan !== '') {
     message += `\nPlan: ${plan}\n`;
   }
 
@@ -319,7 +324,7 @@ function buildUserMessage(
     message += recoveryMessage;
   }
 
-  if (domainSkill !== undefined && domainSkill !== null) {
+  if (contextLevel === 'full' && domainSkill !== undefined && domainSkill !== null) {
     message += '\n--- PLAYBOOK (proven workflow for this site) ---\n';
     message += `\n"${domainSkill.skill.title}" — ${domainSkill.skill.description}\n`;
     for (const step of domainSkill.skill.steps) {
@@ -347,19 +352,29 @@ function buildUserMessage(
   }
   message += '\n';
 
-  if (history.length > 0) {
+  // In minimal mode, only show the last 3 steps to reduce token count
+  if (contextLevel === 'minimal' && history.length > 0) {
+    const recentSteps = history.slice(-3);
+    message += 'Recent actions:\n';
+    for (const step of recentSteps) {
+      message += formatStep(step);
+    }
+    message += '\n';
+  } else if (history.length > 0) {
     message += truncateHistory(history);
     message += '\n';
   }
 
-  const alertLines = snapshot
-    .split('\n')
-    .filter((line) => /\b(alert|status|dialog|banner|toast|notification|error|warning)\b/i.test(line))
-    .map((line) => line.trim())
-    .filter(Boolean);
+  if (contextLevel !== 'minimal') {
+    const alertLines = snapshot
+      .split('\n')
+      .filter((line) => /\b(alert|status|dialog|banner|toast|notification|error|warning)\b/i.test(line))
+      .map((line) => line.trim())
+      .filter(Boolean);
 
-  if (alertLines.length > 0) {
-    message += `⚠ Active alerts/notifications on page:\n${alertLines.join('\n')}\n\n`;
+    if (alertLines.length > 0) {
+      message += `⚠ Active alerts/notifications on page:\n${alertLines.join('\n')}\n\n`;
+    }
   }
 
   message += `Page snapshot:\n${snapshot}`;
@@ -686,6 +701,13 @@ Respond with JSON: {"plan": "your revised plan here"}`,
     // Keep plan available for longer — it's cheap context and prevents drift
     const planForStep = step <= PLAN_INJECT_MAX_STEP ? planText : null;
     const stepsRemaining = maxSteps - step - 1;
+    // Progressive context simplification: reduce context on parse failures to help
+    // the LLM produce valid JSON by shrinking the input it has to process
+    const contextLevel: ContextLevel =
+      consecutiveParseFailures >= 2 ? 'minimal' : consecutiveParseFailures >= 1 ? 'reduced' : 'full';
+    if (contextLevel !== 'full') {
+      logger.info({ step, contextLevel, consecutiveParseFailures }, 'Using simplified context');
+    }
     const userMessage = buildUserMessage(refinedPrompt, snapshot, history, url, title, {
       plan: planForStep,
       tabCount,
@@ -694,6 +716,7 @@ Respond with JSON: {"plan": "your revised plan here"}`,
       maxSteps,
       recoveryMessage,
       originalPrompt: prompt,
+      contextLevel,
     });
 
     // On the last step, force the agent to produce a final answer
@@ -889,7 +912,13 @@ Respond with JSON: {"plan": "your revised plan here"}`,
         const message = err instanceof Error ? err.message : 'Action execution failed';
         logger.error({ step, action: action.action, error: message }, 'Action execution failed');
         emit('step_error', { step, action: action.action, error: message });
-        agentStep.action.error_feedback = message;
+
+        // Detect stale ref errors and provide explicit guidance to use new refs
+        if (action.ref !== undefined && /not found|no element|stale|detached/i.test(message)) {
+          agentStep.action.error_feedback = `${message}. The page has re-rendered and element refs have changed. Do NOT retry ref "${action.ref}" — find the element by its role/name in the NEW snapshot below.`;
+        } else {
+          agentStep.action.error_feedback = message;
+        }
         recentFailureCount++;
         await holder.page.waitFor({ timeMs: 1000 });
 
