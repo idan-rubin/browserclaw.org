@@ -55,7 +55,7 @@ export async function judgeRun(prompt: string, result: AgentLoopResult): Promise
       message: buildJudgeMessage(prompt, result),
       maxTokens: 256,
     });
-    logger.info({ success: verdict.success, reasoning: verdict.reasoning }, 'Judge verdict');
+    logger.info({ success: verdict.success, judge_ran: true }, 'Judge verdict');
     return verdict;
   } catch (err) {
     logger.warn(

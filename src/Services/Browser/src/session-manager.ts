@@ -16,7 +16,7 @@ import { judgeRun } from './judge.js';
 import { moderatePrompt } from './content-policy.js';
 import { logPrompt } from './prompt-log.js';
 import { requireEnvInt, USER_RESPONSE_TIMEOUT_MS } from './config.js';
-import { getLLMCallCount, resetLLMCallCount, runWithLlmConfig, sanitizeErrorText } from './llm.js';
+import { getLLMCallCount, resetLLMCallCount, runWithLlmConfig } from './llm.js';
 import { extractDomain, getSkillForDomain, getSkillsForDomains, saveSkill } from './skill-store.js';
 import { logger } from './logger.js';
 
@@ -336,7 +336,10 @@ async function startAgentLoop(sessionId: string): Promise<void> {
   } catch (err) {
     managed.status = 'failed';
     const message = err instanceof Error ? err.message : 'Agent loop crashed';
-    logger.error({ sessionId, error: sanitizeErrorText(message) }, 'Agent loop crashed');
+    logger.error(
+      { sessionId, error_type: err instanceof Error ? err.constructor.name : 'unknown' },
+      'Agent loop crashed',
+    );
     emitter('failed', { step: 0, error: message });
   }
 
@@ -529,7 +532,11 @@ async function tryGenerateSkill(
         }
       } catch (err) {
         logger.error(
-          { domain: managed.domain, error_type: err instanceof Error ? err.constructor.name : 'unknown' },
+          {
+            domain: managed.domain,
+            save_failed: true,
+            error_type: err instanceof Error ? err.constructor.name : 'unknown',
+          },
           'Failed to save skill',
         );
       }
@@ -537,7 +544,11 @@ async function tryGenerateSkill(
     return 'none';
   } catch (err) {
     logger.error(
-      { sessionId: managed.id, error_type: err instanceof Error ? err.constructor.name : 'unknown' },
+      {
+        sessionId: managed.id,
+        skill_generation_failed: true,
+        error_type: err instanceof Error ? err.constructor.name : 'unknown',
+      },
       'Skill generation failed',
     );
     return 'none';
